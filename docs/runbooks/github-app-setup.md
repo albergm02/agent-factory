@@ -61,7 +61,7 @@ The names above are the convention workflows will use. If you choose different n
 
 Workflows mint a short-lived installation token (valid for one hour, revoked when the job ends) with `actions/create-github-app-token`, pinned by full commit SHA (project rule: third-party actions are pinned by SHA).
 
-Resolved on 2026-11-23: tag `v3.4.0` (released 2026-11-18) points to a commit directly (a lightweight tag, no dereferencing needed):
+Resolved on 2026-11-23: tag `v3.4.0` points to a commit directly (a lightweight tag, no dereferencing needed):
 
 ```
 actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc  # v3.4.0

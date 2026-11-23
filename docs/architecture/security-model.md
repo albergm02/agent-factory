@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-11-23 (ADR-0002: agent-merged PRs, human decisions via Discussions) |
+| **Last updated** | 2026-11-23 (public repository, `protect-main` ruleset, owner decisions D1–D6) |
 | **Related** | [System Overview](system-overview.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) · [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) |
 
 ## 1. Purpose, scope and assumptions
@@ -16,7 +16,7 @@ This document defines how Agent Factory protects its assets while AI agents act 
 - A2. The repository owner is trusted. The owner's account uses MFA.
 - A3. GitHub, the model provider and the CI runners are trusted infrastructure, within their documented guarantees.
 - A4. Any third-party MCP server, Skill or dependency is untrusted until reviewed and pinned.
-- A5. Phase 1 operates on a private repository on the GitHub Free plan, so **server-side branch protection and rulesets are unavailable** ([ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) §6).
+- A5. The repository is **public** (owner decision D2, [Discussion #3](https://github.com/albergm02/agent-factory/discussions/3)). Anyone can open issues, PRs, discussions and comments, so all such content is untrusted data. The ruleset `protect-main` (§12) enforces PR-only changes, linear history and no force push or deletion on the server, for everyone. Agents still act through the owner's account, which has admin scope (§6). See [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) §6.
 - A6. Agents review and merge PRs themselves under the merge policy (ADR-0002 §1). There is no routine human code review.
 
 **Security objective:** a fully compromised agent session (for example through prompt injection) must not be able to:
@@ -29,9 +29,9 @@ This document defines how Agent Factory protects its assets while AI agents act 
 
 **Current status of these objectives.**
 
-- **Today** they are **not yet met**. The agent-side controls (§7, §8) and the detective controls (§12) are scheduled for F1. Until then, the merge policy depends on the agent following it.
+- **Today** they are **only partly met**. The server-side ruleset `protect-main` is active (§12), and secret scanning, push protection and Dependabot alerts are enabled (§10, §16). The agent-side controls (§7, §8), the CI checks and the detective controls (§12) are scheduled for F1. Until then, the merge policy depends on the agent following it, and required status checks are not yet part of the ruleset.
 - **After F1**, the objectives hold against agents that **make mistakes**, not against a **compromised** session that holds the owner's credentials.
-- They hold against a compromised session only once agents run under a dedicated GitHub App identity without administration, workflows or secrets scopes (H2), and the server enforces rulesets (H3/H4). See ADR-0002 §6.
+- They hold against a compromised session only once agents run under a dedicated GitHub App identity without administration, workflows or secrets scopes (D3, an H2 decision: approved, not yet created). The ruleset exists, but a session using the owner's admin scope could edit or delete it through the API. See ADR-0002 §6.
 
 ## 2. Assets
 
@@ -101,8 +101,8 @@ The threats below are organized with STRIDE and mapped to the OWASP Top 10 for L
 | T10 | **Sensitive data in telemetry** | I | LLM02 | Prompts or tool inputs containing secrets exported to OTel | §14 |
 | T11 | **Inter-agent abuse** (future A2A) | S, E | — | An external agent impersonates a trusted role | Out of scope until A2A is adopted (requires an ADR) |
 | T12 | **Over-reliance on AI review** | — | LLM09 | The reviewer agent misses a defect it shares with the implementer | Fresh-context reviewer (optionally on a different model); `security-reviewer` on R2–R3; evals with seeded defects; escaped-defect metric; cheap reverts |
-| T13 | **Merge-policy bypass** | T, E | LLM06 | An agent merges with failing checks or pushes directly to `main` | Permission deny rules (§7); `main-integrity` detection (§12); rulesets once available |
-| T14 | **Forged human decision** | S | — | A compromised agent posts an "APPROVED" comment under the shared owner account | Ordering rule (no replay of older approvals); audit log of agent-created comment IDs (detective; can be bypassed by a compromised session); comment marker (convention only); owner cross-checks unexpected H1, H2, H3 and H6 decisions; GitHub App identity (H2), which is the real fix |
+| T13 | **Merge-policy bypass** | T, E | LLM06 | An agent merges with failing checks or pushes directly to `main` | Ruleset `protect-main` (§12); permission deny rules (§7); `main-integrity` detection (§12) |
+| T14 | **Forged human decision** | S | — | A compromised agent posts an "APPROVED" comment under the shared owner account | Authorship check (account `albergm02` with `authorAssociation` OWNER, so comments from any other user of the public repository never count); ordering rule (no replay of older approvals); audit log of agent-created comment IDs (detective; can be bypassed by a compromised session); comment marker (convention only); owner cross-checks unexpected H1, H2, H3 and H6 decisions; GitHub App identity (H2), which is the real fix |
 
 ## 5. Control principles
 
@@ -116,10 +116,10 @@ The threats below are organized with STRIDE and mapped to the OWASP Top 10 for L
 ## 6. Identity and access
 
 - **Target state:** agents act through a **dedicated GitHub App** (for example `agent-factory-bot`). Personal access tokens are never used. The App's installation tokens are short-lived.
-- **Interim state (until the owner creates the App, an H2 decision):** agents act through the owner's authenticated `gh` session. Every comment written by an agent starts with `🤖 Agent Factory:`. That session holds **administration, workflows and secrets scopes**, which the App is meant to exclude, so threats T13 and T14 apply in full.
+- **Interim state (until the owner creates the App, an H2 decision):** agents act through the owner's authenticated `gh` session. Every comment written by an agent starts with `🤖 Agent Factory:`. That session holds **administration, workflows and secrets scopes**, which the App is meant to exclude. The ruleset `protect-main` blocks direct pushes for everyone, but this session can edit or delete the ruleset through the API, so threats T13 and T14 still apply to a compromised session. Only the App identity (D3, pending creation by the owner) closes this.
 - **App permissions (phase 1 maximum):** contents read/write, pull requests read/write, issues read/write, discussions read/write, checks read, metadata read. Explicitly **not** granted: administration, workflows, secrets, environments, members.
 - **Separation of duties:** the author and the reviewer are separate agent contexts. Merges happen only when the merge policy is satisfied. Human decisions come only from the owner, through the protocol in ADR-0002 §2.
-- **Branch scope:** agents push only to topic branches (`agent/*`, `docs/*`, `feat/*`, `fix/*`, `chore/*`). They never push to `main` directly; every change reaches `main` through a merged PR. Once the plan supports it, rulesets will enforce this on the server.
+- **Branch scope:** agents push only to topic branches (`agent/*`, `docs/*`, `feat/*`, `fix/*`, `chore/*`). They never push to `main` directly; every change reaches `main` through a merged PR. The ruleset `protect-main` enforces this on the server (§12).
 - **Owner account:** MFA required.
 
 ## 7. Claude Code permission policy
@@ -134,6 +134,7 @@ Permissions are configured in `.claude/settings.json`, which is versioned and pr
 
 - **Per-role tool lists:** each subagent definition declares a minimal `tools` list. Read-only roles (`reviewer`, `security-reviewer`) have no write or execute tools. Only `orchestrator` holds the Agent tool (delegation depth 1; see [System Overview §9](system-overview.md#9-agent-model)).
 - **Permission mode:** non-interactive runs never use modes that bypass permissions.
+- **Model policy** (owner decision D5, [Discussion #3](https://github.com/albergm02/agent-factory/discussions/3)): Opus 5.5 is used only for the `orchestrator` role. All other roles use the cheapest adequate model (Sonnet 5.5 or Haiku 5.5). Opus 5.5 is forbidden for every other role. There are no numeric USD budget caps.
 
 ## 8. Security hooks
 
@@ -169,7 +170,8 @@ Hooks complement the sandbox; they do not replace it. Pattern-based command filt
 - Secrets never appear in prompts, files readable by the agent, or tool outputs.
 - CI obtains cloud credentials through **OIDC**, scoped to the job. No long-lived cloud keys are stored.
 - The model API key is injected only into the runtime process, which the agent cannot read through tools; it is listed in the deny rules.
-- **GitHub secret scanning with push protection** is **unavailable on the current plan** (private repository on GitHub Free). The substitute is **gitleaks** in CI plus a pre-commit hook (F1). A detected secret blocks the merge and triggers the incident runbook (§16).
+- **GitHub secret scanning with push protection** is **enabled** (the repository is public). **gitleaks** in CI (job `secret-scan`) plus a pre-commit hook (F1) stay as defense in depth, for example for patterns the GitHub scanner does not cover. A detected secret blocks the merge and triggers the incident runbook (§16).
+- The model API key is stored as the Actions secret `ANTHROPIC_API_KEY` (owner decision D6; the owner creates it). Workflows that run untrusted code never receive it (§12).
 - `.gitignore` already excludes `.env*`, `*.pem` and `*.key`. This is a convenience, not a control.
 
 ## 11. Capability governance
@@ -187,22 +189,24 @@ Hooks complement the sandbox; they do not replace it. Pattern-based command filt
 
 ## 12. CI/CD security
 
-- **Rulesets on `main` (when the plan supports them; currently unavailable):**
-  - PRs are required;
-  - required status checks;
-  - linear history;
-  - no force pushes or deletions.
-  - No required human review: agents merge under the merge policy (ADR-0002).
-- **Compensating controls while rulesets are unavailable:**
+- **Ruleset `protect-main` (active since 2026-11-23; target: the default branch; no bypass actors, not even admins):**
+  - branch deletion blocked;
+  - non-fast-forward updates (force pushes) blocked;
+  - linear history required;
+  - pull request required, with 0 required approvals (no required human review: agents merge under the merge policy, ADR-0002);
+  - allowed merge method: squash only.
+  - **Pending:** required status checks (`docs-check` and `secret-scan`, from workflow `ci.yml`) are added once CI exists. Until then, "green checks" is enforced by the merge policy and the `guard-merge` hook, not by the server.
+  - **Caveat:** the ruleset has no bypass actors, but the owner's admin scope (used by agents in the interim, §6) can still edit or delete it through the API. It protects against accidents and non-admin actors, not against a compromised agent session.
+- **Compensating controls (still needed for the gaps above):**
   - permission deny rules (§7) and the `guard-branch` and `guard-merge` hooks (§8);
   - a **`main-integrity` workflow** on every push to `main`, which verifies that the commit comes from a merged PR with green checks and opens an `[Alert]` Discussion otherwise;
   - a merge-policy checklist comment on every PR.
 - **CODEOWNERS:** used for notifications and as the list of guardrail owners, not for required reviews.
-- **Trusted triggers only:** agent workflows start only from events created by trusted actors. A workflow checks `author_association` (OWNER, MEMBER or COLLABORATOR) or the presence of a label that only maintainers can apply.
+- **Trusted triggers only:** agent workflows start only from events created by trusted actors. A workflow checks `author_association` (OWNER, MEMBER or COLLABORATOR) or the presence of a label that only maintainers can apply. Because the repository is public, issues, PRs, discussions and comments from any user are untrusted data. Secrets are never exposed to workflows triggered by fork PRs. A Discussion comment counts as a human decision only if it is authored by `albergm02` with `authorAssociation` OWNER (ADR-0002 §2).
 - **No `pull_request_target` with checkout of PR code.** Workflows that run untrusted code get a read-only `GITHUB_TOKEN` and no secrets.
 - **Minimal `GITHUB_TOKEN`:** a `permissions:` block is declared on every workflow, read-only by default.
 - **Pinned actions:** third-party actions are pinned by commit SHA. Dependabot keeps them updated. Agents merge its PRs under the merge policy (ADR-0002 §1).
-- **Environments:** production deploy jobs run in GitHub Environments with required reviewers, when the plan supports it. Until then, production deployment is a human decision taken in a Discussion (H5).
+- **Environments:** production deploy jobs run in GitHub Environments with required reviewers, which are available because the repository is public. Production deployment is also a human decision taken in a Discussion (H5).
 
 ## 13. Autonomy and human approval matrix
 
@@ -233,6 +237,7 @@ Effective autonomy is `min(risk-class ceiling, earned level, requested level)` (
 
 ## 14. Data and privacy
 
+- **Public visibility:** all code, history, issues, PRs and Discussions are publicly readable, and commit author emails are visible in the history. Never commit personal data or secrets, and use the GitHub noreply address for commits where possible.
 - **Data sent to the model provider:** the code and context the agent reads. Repositories with data that must not leave the organization are excluded until a data policy is decided. This is an open question.
 - **Telemetry defaults:** prompt text, assistant responses, tool details and tool content are **not** logged. In Claude Code, the variables that would enable them are ignored in project and local settings; enabling them requires user or managed settings and a documented justification.
 - **Retention:** telemetry and audit logs are retained for a defined period (proposed: 90 days for detailed events, 1 year for aggregated metrics). This is an open question.
@@ -267,7 +272,7 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 - sandbox network blocks;
 - budget overruns;
 - unusual push patterns;
-- secret findings (gitleaks now; GitHub secret scanning when the plan supports it);
+- secret findings (gitleaks in CI; GitHub secret scanning alerts and push-protection blocks; Dependabot alerts);
 - unexpected changes to protected paths;
 - `main-integrity` alerts (commits on `main` that did not come from a policy-compliant PR).
 
@@ -287,9 +292,9 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 |---|---|---|
 | Novel prompt-injection techniques | No complete defense exists | Assume compromise; deterministic controls bound the blast radius |
 | Shared blind spots between AI implementer and AI reviewer, with no human code review | Correlated model behavior; owner decision (ADR-0002) | Fresh-context reviewer; optional different reviewer model; seeded-defect evals; small PRs; fast revert; demotion on escaped defects |
-| No server-side enforcement on GitHub Free (private) | Plan limitation | Agent-side prevention plus `main-integrity` detection; the owner may go public or upgrade (H3/H4) |
-| A compromised agent session holding the owner's credentials can bypass every agent-side control (direct API calls, disabling workflows, editing labels, forging approvals) | Shared identity with admin scopes; no rulesets | Only the GitHub App identity (H2) plus server-side rulesets (H3/H4) close this. Until then, the controls protect against agent mistakes, not against compromise |
-| Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker (convention only); ordering rule (an approval counts only if posted after the latest request); audit log of agent-created comments; owner cross-check of H1, H2, H3 and H6 decisions; create the App (H2) |
+| Server-side enforcement is partial: the ruleset has no required status checks yet, and the owner's admin scope can alter it | Required checks need CI, which does not exist yet; agents share the owner's admin identity | Add required checks `docs-check` and `secret-scan` once CI exists; agent-side prevention plus `main-integrity` detection; GitHub App identity (D3) |
+| A compromised agent session holding the owner's credentials can bypass every agent-side control (direct API calls, disabling workflows, editing labels, forging approvals) | Shared identity with admin scopes; the ruleset is editable with that scope | Only the GitHub App identity (D3, an H2 decision) closes this. Until then, the controls protect against agent mistakes, not against compromise |
+| Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker (convention only); ordering rule (an approval counts only if posted after the latest request); audit log of agent-created comments; owner cross-check of H1, H2, H3 and H6 decisions; owner-authorship check; create the App (D3) |
 | Guardrail tightening vs. relaxing judged by an agent | No deterministic classifier | Uncertain changes count as relaxing; guardrail change log reviewed by the owner |
 | Hook pattern bypass | String matching is incomplete | The sandbox and permissions are primary; hooks are secondary |
 | Rapid evolution of Claude Code, MCP and A2A | Features and defaults change | Pin versions; record verification dates; review this model quarterly and on every major upgrade |

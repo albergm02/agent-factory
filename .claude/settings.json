@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(.env*)",
+      "Read(**/*.pem)",
+      "Read(**/*.key)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)",
+      "Bash(git push --force*)",
+      "Bash(git push * main*)",
+      "Bash(git push *:main*)",
+      "Bash(gh pr merge * --admin*)",
+      "Bash(gh repo edit*)",
+      "Bash(gh repo delete*)",
+      "Bash(gh secret *)",
+      "Bash(gh workflow *)",
+      "Bash(curl *)",
+      "Bash(wget *)"
+    ],
+    "ask": [
+      "Bash(npm install*)",
+      "Bash(npm i *)",
+      "Bash(npm ci*)",
+      "Bash(pnpm install*)",
+      "Bash(pnpm add *)",
+      "Bash(yarn install*)",
+      "Bash(yarn add *)",
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python -m pip install *)",
+      "Bash(python3 -m pip install *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Edit|Write|MultiEdit|NotebookEdit|Bash)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" guard_protected_paths",
+            "shell": "bash",
+            "timeout": 90,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" guard_branch",
+            "shell": "bash",
+            "timeout": 90,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^(Bash|mcp__.*merge.*pull.*|mcp__.*pull.*merge.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" guard_merge",
+            "shell": "bash",
+            "timeout": 90,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^(Bash|mcp__.*(label|issue_write|update_issue|update_pull_request|pull_request_write).*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" guard_labels",
+            "shell": "bash",
+            "timeout": 90,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" guard_dangerous_commands",
+            "shell": "bash",
+            "timeout": 90,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|mcp__.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/run.sh\" audit_tool_use",
+            "shell": "bash",
+            "timeout": 90
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -102,7 +102,7 @@ The threats below are organized with STRIDE and mapped to the OWASP Top 10 for L
 | T11 | **Inter-agent abuse** (future A2A) | S, E | — | An external agent impersonates a trusted role | Out of scope until A2A is adopted (requires an ADR) |
 | T12 | **Over-reliance on AI review** | — | LLM09 | The reviewer agent misses a defect it shares with the implementer | Fresh-context reviewer (optionally on a different model); `security-reviewer` on R2–R3; evals with seeded defects; escaped-defect metric; cheap reverts |
 | T13 | **Merge-policy bypass** | T, E | LLM06 | An agent merges with failing checks or pushes directly to `main` | Permission deny rules (§7); `main-integrity` detection (§12); rulesets once available |
-| T14 | **Forged human decision** | S | — | A compromised agent posts an "APPROVED" comment under the shared owner account | Audit log of agent-created comment IDs (detective; can be bypassed by a compromised session); comment marker (convention only); owner cross-checks unexpected H1, H2, H3 and H6 decisions; GitHub App identity (H2), which is the real fix |
+| T14 | **Forged human decision** | S | — | A compromised agent posts an "APPROVED" comment under the shared owner account | Ordering rule (no replay of older approvals); audit log of agent-created comment IDs (detective; can be bypassed by a compromised session); comment marker (convention only); owner cross-checks unexpected H1, H2, H3 and H6 decisions; GitHub App identity (H2), which is the real fix |
 
 ## 5. Control principles
 
@@ -129,7 +129,7 @@ Permissions are configured in `.claude/settings.json`, which is versioned and pr
 | Rule type | Phase 1 policy (indicative) |
 |---|---|
 | `deny` | `Read(.env*)`, `Read(**/*.pem)`, `Read(**/*.key)`, `Read(~/.ssh/**)`, `Read(~/.aws/**)`, `Bash(git push --force*)`, `Bash(git push * main*)`, `Bash(git push *:main*)`, `Bash(gh pr merge * --admin*)`, `Bash(gh repo edit*)`, `Bash(gh repo delete*)`, `Bash(gh secret *)`, `Bash(gh workflow *)`, `Bash(curl *)`, `Bash(wget *)` |
-| `ask` | `Bash(gh api *)`, except for an allowlist of read-only and Discussion endpoints (unattended runs: deny); any MCP tool with side effects; dependency install commands; `Bash(git push*)` at L1; edits to guardrail files (ADR-0002 §5) outside tasks scoped to guardrails |
+| `ask` | `Bash(gh api *)` in interactive sessions (unattended runs: deny). Ask and deny rules take precedence over allow rules, so allow entries cannot carve out exceptions; the endpoint allowlist (read-only and Discussion endpoints) is enforced by a `PreToolUse` hook. Also: any MCP tool with side effects; dependency install commands; `Bash(git push*)` at L1; edits to guardrail files (ADR-0002 §5) outside tasks scoped to guardrails |
 | `allow` | Read and search within the workspace; project build, test and lint commands; edits within the role's allowed paths |
 
 - **Per-role tool lists:** each subagent definition declares a minimal `tools` list. Read-only roles (`reviewer`, `security-reviewer`) have no write or execute tools. Only `orchestrator` holds the Agent tool (delegation depth 1; see [System Overview §9](system-overview.md#9-agent-model)).
@@ -289,7 +289,7 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 | Shared blind spots between AI implementer and AI reviewer, with no human code review | Correlated model behavior; owner decision (ADR-0002) | Fresh-context reviewer; optional different reviewer model; seeded-defect evals; small PRs; fast revert; demotion on escaped defects |
 | No server-side enforcement on GitHub Free (private) | Plan limitation | Agent-side prevention plus `main-integrity` detection; the owner may go public or upgrade (H3/H4) |
 | A compromised agent session holding the owner's credentials can bypass every agent-side control (direct API calls, disabling workflows, editing labels, forging approvals) | Shared identity with admin scopes; no rulesets | Only the GitHub App identity (H2) plus server-side rulesets (H3/H4) close this. Until then, the controls protect against agent mistakes, not against compromise |
-| Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker; ordering rule for approvals; create the App (H2) |
+| Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker (convention only); ordering rule (an approval counts only if posted after the latest request); audit log of agent-created comments; owner cross-check of H1, H2, H3 and H6 decisions; create the App (H2) |
 | Guardrail tightening vs. relaxing judged by an agent | No deterministic classifier | Uncertain changes count as relaxing; guardrail change log reviewed by the owner |
 | Hook pattern bypass | String matching is incomplete | The sandbox and permissions are primary; hooks are secondary |
 | Rapid evolution of Claude Code, MCP and A2A | Features and defaults change | Pin versions; record verification dates; review this model quarterly and on every major upgrade |

@@ -66,8 +66,14 @@ Merges use **squash**, and the head branch is deleted afterwards.
    - links to the affected PRs or issues.
 2. The affected PR (if any) gets the `needs-human` label and a link to the Discussion. It stays open, and the agent continues with independent work.
 3. **A decision is valid only when** it is either:
-   - a Discussion comment by the owner that starts with `APPROVED`, `REJECTED` or `CHOOSE`, is not marked as agent-written, and was **not created by an agent** (its ID does not appear in the agent audit log of created comments); or
-   - an instruction the owner types directly into an interactive agent session.
+   - a Discussion comment by the owner that meets all of these conditions:
+     - it starts with `APPROVED`, `REJECTED` or `CHOOSE`;
+     - it was posted **after the agent's latest request** in that Discussion, so an older approval can never validate a newer request;
+     - it is not marked as agent-written;
+     - it was **not created by an agent**: its ID does not appear in the agent audit log of created comments;
+   - or an instruction the owner types directly into an interactive agent session.
+
+   The agent audit log is scheduled for F1 (§6). Until it exists, an instruction typed in an interactive session is the only fully reliable way to record an H1, H2, H3 or H6 decision. Discussion comments for those decisions should also be confirmed in a session.
 4. The agent records the outcome in the Discussion, marks the answer (where the category supports answers), removes `needs-human`, and continues.
 5. Every comment written by an agent starts with the marker `🤖 Agent Factory:`. A comment without the marker is never posted by an agent.
 
@@ -102,7 +108,7 @@ Everything else is decided and merged by agents under the merge policy. This inc
 
 This is the **single, authoritative list of guardrail files**. Other documents refer to it.
 
-- `.claude/**` (settings, including `settings.local.json`, hooks, agents and Skills);
+- `.claude/**` (settings, hooks, agents and Skills). This includes `settings.local.json`, which is not committed and so never reaches PR review; the `guard-protected-paths` hook is its only control;
 - `CLAUDE.md`;
 - `.github/**` (workflows, templates, Discussion forms);
 - `**/CODEOWNERS`;
@@ -119,7 +125,7 @@ Any PR that touches them is classified **R3**, and:
 
 | Control | Type | Status |
 |---|---|---|
-| Claude Code permission rules: deny pushes to `main` (any refspec), force pushes, `gh pr merge --admin`, `gh repo edit`/`delete`, `gh secret`, `gh workflow`; `gh api` limited to an allowlist of read and Discussion endpoints | Preventive (agent side) | To implement in F1 |
+| Claude Code permission rules: deny pushes to `main` (any refspec), force pushes, `gh pr merge --admin`, `gh repo edit`/`delete`, `gh secret`, `gh workflow`; `gh api` set to ask (interactive) or deny (unattended), with a hook that allows only an allowlist of read and Discussion endpoints | Preventive (agent side) | To implement in F1 |
 | Hooks `guard-merge` (covering `gh pr merge`, `gh api …/merge` and MCP merge tools) and `guard-labels` (never remove `agents:halt`) | Preventive (agent side) | To implement in F1 |
 | Secret scanning substitute: gitleaks in CI plus a pre-commit hook | Preventive and detective | To implement in F1 |
 | `main-integrity` workflow on every push to `main`: verifies the commit comes from a merged PR with green checks; otherwise opens an `[Alert]` Discussion | Detective | To implement in F1 |

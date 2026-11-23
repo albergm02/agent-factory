@@ -342,6 +342,20 @@ A human decision never merges a PR by itself. After the decision, the PR returns
 | `security-reviewer` | Security-focused review | Read-only | No |
 | `docs` | Documentation updates | Read, Edit (docs paths) | Docs only |
 
+**Implementation:** the roles are defined as subagents in [`.claude/agents/`](../../.claude/agents/). The `orchestrator` is the main interactive session (Opus 5.5), not a subagent file. Pinned models and tools:
+
+| Role | Model | Tools |
+|---|---|---|
+| `planner` | `sonnet` | Read, Grep, Glob, Write, Edit, Bash |
+| `implementer` | `sonnet` | Read, Grep, Glob, Edit, Write, Bash |
+| `test-author` | `sonnet` | Read, Grep, Glob, Edit, Write, Bash |
+| `reviewer` | `sonnet` | Read, Grep, Glob, Bash (read-only use) |
+| `security-reviewer` | `sonnet` | Read, Grep, Glob, Bash (read-only use) |
+| `docs` | `haiku` | Read, Grep, Glob, Edit, Write, Bash |
+| `triage` | `haiku` | Read, Grep, Glob, Bash (read-only use) |
+
+No subagent holds the `Agent` tool, and none uses `opus` or `inherit`.
+
 **Delegation depth:** Claude Code allows nested subagents, with a configurable maximum depth (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`, default 3 at the time of writing). By policy, phase 1 uses a **depth of 1**: only `orchestrator` holds the Agent tool, and worker roles cannot delegate further. This keeps runs auditable and costs bounded. Raising the depth requires an ADR and a human decision (H1).
 
 **Independence:** `reviewer` runs in a fresh context. It never sees the implementer's reasoning, only the spec, the diff and the evidence. It can be configured to use a different model.
@@ -504,9 +518,11 @@ docs/
   architecture/      # this document, security model
   decisions/         # ADRs
   lessons/
+  runbooks/          # owner runbooks (for example GitHub App setup)
 evals/               # EDD suites
 schemas/             # contract JSON Schemas
 specs/               # SDD specs
+tests/               # automated tests
 CLAUDE.md
 ```
 

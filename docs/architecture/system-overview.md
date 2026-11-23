@@ -153,7 +153,7 @@ Engineering Infrastructure is the substrate under every other subsystem: reposit
 - Run the task state machine (§8).
 - Decompose work into tasks.
 - Route each task to an agent role.
-- Enforce budgets (turns, wall-clock time, cost, retries).
+- Enforce budgets (turns, wall-clock time, retries; cost only if the owner sets a limit).
 - Apply the effective autonomy level (§13).
 - Escalate to humans.
 
@@ -288,7 +288,7 @@ All contracts are versioned (`contract: <name>/v<major>`). Phase 1 represents th
 | Contract | From → To | Key fields | Phase 1 carrier |
 |---|---|---|---|
 | **Work Request** | HCC → ORC | `objective`, `context`, `acceptance_criteria[]`, `risk_class`, `requested_autonomy` | Issue form |
-| **Task Envelope** | ORC → RT | `task_id`, `spec_ref`, `role`, `allowed_capabilities[]`, `budget{turns, minutes, cost}`, `autonomy_level`, `workspace{repo, branch}` | Workflow inputs and prompt preamble |
+| **Task Envelope** | ORC → RT | `task_id`, `spec_ref`, `role`, `allowed_capabilities[]`, `budget{turns, minutes, cost?}`, `autonomy_level`, `workspace{repo, branch}` | Workflow inputs and prompt preamble |
 | **Capability Invocation** | RT → CAP | MCP JSON-RPC, Skill load, tool call | Native Claude Code mechanisms, mediated by permissions and hooks |
 | **Change Set + Evidence** | RT → QE | `branch`, `pr`, `spec_ref`, `tests_run[]`, `self_assessment`, `open_questions[]` | Pull request body (template) |
 | **Verdict** | QE → ORC/HCC | `result`, `findings[]{severity, location, rationale}`, `gates{}` | Check runs and review comments |

@@ -92,7 +92,7 @@ Merges use **squash**, and the head branch is deleted afterwards.
 | H1 | **Relaxing guardrails** | Removing or loosening permission rules, hooks, sandbox settings, CI gates, this merge policy, this list, or autonomy levels. *Adding or tightening* guardrails does not require a human. |
 | H2 | **Secrets, credentials and access** | Creating or rotating secrets; GitHub App permissions; collaborators; tokens |
 | H3 | **Repository and account settings** | Visibility (public or private), plan, Discussions categories, branch protection settings |
-| H4 | **Spending money** | Plan upgrades, paid services, exceeding the task or monthly budget |
+| H4 | **Spending money** | Plan upgrades, paid services, exceeding the model policy (D5) or any cost limit the owner sets |
 | H5 | **Production and external publication** | Deploying to production; publishing packages; public releases; making anything public |
 | H6 | **Destructive or irreversible operations** | Deleting data, repositories, releases or tags; rewriting the history of `main` |
 | H7 | **New third parties receiving code or data** | New MCP servers or external services with access to the code or the data |
@@ -115,6 +115,7 @@ This is the **single, authoritative list of guardrail files**. Other documents r
 - `.claude/**` (settings, hooks, agents and Skills). This includes `settings.local.json`, which is not committed and so never reaches PR review; the `guard-protected-paths` hook is its only control;
 - `CLAUDE.md`;
 - `.github/**` (workflows, templates, Discussion forms);
+- `scripts/**` (CI gate logic, for example `scripts/check_docs.py`);
 - `**/CODEOWNERS`;
 - `docs/architecture/**`;
 - `docs/decisions/**`.

@@ -32,3 +32,4 @@
 - [ ] Traceability: the PR links its spec or issue
 - [ ] Visual sign-off, if user-facing
 - [ ] No `agents:halt` or `needs-human` label on the PR
+- [ ] No ADR-0002 section 3 human decision required, or each one approved and linked (ADR-0002 section 1.1)

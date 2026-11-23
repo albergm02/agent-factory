@@ -153,7 +153,7 @@ Engineering Infrastructure is the substrate under every other subsystem: reposit
 - Run the task state machine (§8).
 - Decompose work into tasks.
 - Route each task to an agent role.
-- Enforce budgets (turns, wall-clock time, cost, retries).
+- Enforce budgets (turns, wall-clock time, retries; cost is enforced when the owner sets a limit, none today per D5).
 - Apply the effective autonomy level (§13).
 - Escalate to humans.
 

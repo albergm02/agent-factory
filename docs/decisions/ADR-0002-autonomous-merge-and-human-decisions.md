@@ -92,7 +92,7 @@ Merges use **squash**, and the head branch is deleted afterwards.
 | H1 | **Relaxing guardrails** | Removing or loosening permission rules, hooks, sandbox settings, CI gates, this merge policy, this list, or autonomy levels. *Adding or tightening* guardrails does not require a human. |
 | H2 | **Secrets, credentials and access** | Creating or rotating secrets; GitHub App permissions; collaborators; tokens |
 | H3 | **Repository and account settings** | Visibility (public or private), plan, Discussions categories, branch protection settings |
-| H4 | **Spending money** | Plan upgrades, paid services, exceeding the model policy (D5) or any cost limit the owner sets |
+| H4 | **Spending money** | Plan upgrades, paid services, exceeding the model policy (D5), exceeding a task's turn or time limits, or exceeding any per-task or monthly cost limit the owner sets (none is set today, per D5) |
 | H5 | **Production and external publication** | Deploying to production; publishing packages; public releases; making anything public |
 | H6 | **Destructive or irreversible operations** | Deleting data, repositories, releases or tags; rewriting the history of `main` |
 | H7 | **New third parties receiving code or data** | New MCP servers or external services with access to the code or the data |

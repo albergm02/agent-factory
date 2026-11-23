@@ -62,12 +62,15 @@ jobs:
           reasons=""
           for sha in $shas; do
             pr=""
+            apierr=""
             for attempt in 1 2 3; do
-              pr=$(gh api "repos/$REPO/commits/$sha/pulls" \
-                --jq "[.[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"$sha\")] | first | .head.sha // empty" 2>/dev/null || true)
+              out=$(gh api "repos/$REPO/commits/$sha/pulls" \
+                --jq "[.[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"$sha\")] | first | .head.sha // empty" 2>&1) \
+                && { pr="$out"; apierr=""; } || { pr=""; apierr="$out"; }
               [ -n "$pr" ] && break
               sleep 5
             done
+            [ -z "$pr" ] && [ -n "$apierr" ] && echo "::warning::API error looking up PRs for $sha: $apierr"
             if [ -z "$pr" ]; then
               echo "::error::Commit $sha is not the merge commit of a PR merged into main"
               bad="$bad $sha"
@@ -118,8 +121,8 @@ jobs:
 
           for sha in $bad; do
             short=${sha:0:7}
-            body=$(printf '🤖 Agent Factory: commit %s reached `main` without a merged pull request with green checks.\n\n- Commit: https://github.com/%s/commit/%s\n- Pusher: %s\n- Workflow run: https://github.com/%s/actions/runs/%s\n\nRemediation: find out how the commit reached `main` (direct push, bypassed merge or red checks). If it is legitimate, document it here; otherwise revert it through a PR and review the guard hooks and permissions that should have prevented it.\n' \
-              "$short" "$REPO" "$sha" "$PUSHER" "$REPO" "$GITHUB_RUN_ID")
+            body=$(printf '🤖 Agent Factory: commit %s reached `main` without a merged pull request with green checks.\n\n- Commit: https://github.com/%s/commit/%s\n- Pusher: %s\n- Workflow run: https://github.com/%s/actions/runs/%s\n\nRemediation: find out how the commit reached `main` (direct push, bypassed merge or red checks). If it is legitimate, document it here; otherwise revert it through a PR and review the guard hooks and permissions that should have prevented it.\n\nDetected violations: %s\n' \
+              "$short" "$REPO" "$sha" "$PUSHER" "$REPO" "$GITHUB_RUN_ID" "$reasons")
             gh api graphql -f query='mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{url}}}' \
               -f r="$repo_id" -f c="$cat_id" -f t="[Alert] Commit $short reached main without a merged PR with green checks" -f b="$body" \
               --jq .data.createDiscussion.discussion.url || echo "::error::Failed to create Discussion for $short. Violations: $reasons"

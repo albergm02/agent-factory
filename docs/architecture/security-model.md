@@ -148,7 +148,7 @@ Hooks are deterministic, versioned and protected. A hook that exits with code 2 
 | `guard-merge` | `PreToolUse` (Bash `gh pr merge`, Bash `gh api …/merge`, MCP merge tools) | Block the merge unless the PR has green checks, a merge-policy comment and no `needs-human` or `agents:halt` label |
 | `guard-labels` | `PreToolUse` (Bash `gh` label edits, `gh api` label endpoints, MCP label tools) | Block any removal of `agents:halt`; allow removing `needs-human` only when a recorded decision is linked |
 | `audit-tool-use` | `PostToolUse` | Emit a structured audit event (tool, target, decision, correlation IDs) |
-| `budget-check` | `PreToolUse` / `Stop` | Stop the run when the turn or time limit is exhausted (both mandatory). A cost limit applies only if the owner sets one (none today, per D5) |
+| `budget-check` | `PreToolUse` / `Stop` | Stop the run when the turn or time budget is exhausted, or when any cost limit the owner has set (none today, per D5) is reached |
 
 Hooks complement the sandbox; they do not replace it. Pattern-based command filtering can be bypassed, so network and filesystem isolation (§9) remain the primary controls for T2 and T3.
 
@@ -201,6 +201,7 @@ Hooks complement the sandbox; they do not replace it. Pattern-based command filt
   - permission deny rules (§7) and the `guard-branch` and `guard-merge` hooks (§8);
   - a **`main-integrity` workflow** on every push to `main`, which verifies that every commit pushed (including the head commit) is the squash-merge commit of a merged PR **and** that the PR's head commit has green checks (all check runs successful, `docs-check` and `secret-scan` present), and opens an `[Alert]` Discussion otherwise;
   - a merge-policy checklist comment on every PR.
+- **Push size:** for a push with more than 20 commits only the first 20 plus the head commit are checked by `main-integrity` (acceptable with squash-only merges).
 - **CODEOWNERS:** used for notifications and as the list of guardrail owners, not for required reviews.
 - **Trusted triggers only:** agent workflows start only from events created by trusted actors. A workflow checks `author_association` (OWNER, MEMBER or COLLABORATOR) or the presence of a label that only maintainers can apply. Because the repository is public, issues, PRs, discussions and comments from any user are untrusted data. Secrets are not exposed to workflows triggered by fork PRs because workflows use `pull_request` and never `pull_request_target` with a checkout of PR code. The repository setting "Require approval for all outside collaborators" for fork workflow runs is recommended; the owner or orchestrator applies it (an H3 setting), agents do not change settings. A Discussion comment counts as a human decision only if it is authored by `albergm02` with `authorAssociation` OWNER (ADR-0002 §2).
 - **No `pull_request_target` with checkout of PR code.** Workflows that run untrusted code get a read-only `GITHUB_TOKEN` and no secrets.
@@ -226,7 +227,7 @@ Effective autonomy is `min(risk-class ceiling, earned level, requested level)` (
 | H1 | Relaxing guardrails: permissions, hooks, sandbox, CI gates, the merge policy, this list, autonomy levels, delegation depth |
 | H2 | Secrets, credentials and access: creating or rotating secrets, GitHub App permissions, collaborators, tokens |
 | H3 | Repository and account settings: visibility, plan, Discussions categories, branch protection |
-| H4 | Spending money: plan upgrades, paid services, exceeding the model policy (D5) or any cost limit the owner sets |
+| H4 | Spending money: plan upgrades, paid services, exceeding the model policy (D5), exceeding a task's turn or time limits, or exceeding any per-task or monthly cost limit the owner sets (none is set today, per D5) |
 | H5 | Production deployment and external publication: packages, public releases, making anything public |
 | H6 | Destructive or irreversible operations: deleting data, repositories, releases or tags; rewriting the history of `main` |
 | H7 | New third parties receiving code or data: new MCP servers or external services |

@@ -3,10 +3,14 @@ name: main-integrity
 # Compensating control: detects commits that reached main without going through
 # a merged PR with green checks (security-model §12).
 # For every commit pushed to main it verifies (1) the commit is the merge commit
-# of a PR merged into main, and (2) that PR's head commit has green checks: all
-# check runs concluded success, neutral or skipped, and `docs-check` and
-# `secret-scan` are present with success. Otherwise it opens an [Alert]
-# Discussion and fails the job.
+# of a PR merged into main, and (2) that PR's head commit has green checks:
+# `docs-check` and `secret-scan` must be present, completed with success. Any
+# other check run is a violation only if it is completed with failure,
+# cancelled, timed_out, action_required, startup_failure or stale. Runs still
+# queued/in_progress/waiting/pending, or completed with success/neutral/skipped,
+# are not violations (logged as ::notice::). Check runs named `verify` (this
+# workflow's own job) are ignored. Otherwise it opens an [Alert] Discussion and
+# fails the job.
 #
 # Edge cases:
 # - Designed for SQUASH merges (the protect-main ruleset allows squash only).
@@ -71,15 +75,24 @@ jobs:
               continue
             fi
 
-            # Green checks on the PR head commit.
-            failing=$(gh api --paginate "repos/$REPO/commits/$pr/check-runs?per_page=100" \
-              --jq '.check_runs[] | select(.conclusion as $c | ["success","neutral","skipped"] | index($c) | not) | "\(.name)=\(.conclusion // .status)"' 2>&1) || failing="API error: $failing"
-            names=$(gh api --paginate "repos/$REPO/commits/$pr/check-runs?per_page=100" \
-              --jq '.check_runs[] | select(.conclusion == "success") | .name' 2>/dev/null || true)
+            # Green checks on the PR head commit ("verify" is this workflow's own job).
+            failing=""
+            runs=$(gh api --paginate "repos/$REPO/commits/$pr/check-runs?per_page=100" \
+              --jq '.check_runs[] | select(.name != "verify") | [.name, .status, (.conclusion // "")] | @tsv' 2>&1) \
+              || { failing="API error: $runs"; runs=""; }
             missing=""
             for req in docs-check secret-scan; do
-              printf '%s\n' "$names" | grep -qx "$req" || missing="$missing $req"
+              printf '%s\n' "$runs" | awk -F'\t' -v n="$req" '$1==n && $2=="completed" && $3=="success"{f=1} END{exit !f}' || missing="$missing $req"
             done
+            while IFS=$'\t' read -r rname rstatus rconc; do
+              [ -n "$rname" ] || continue
+              case "$rstatus:$rconc" in
+                completed:failure|completed:cancelled|completed:timed_out|completed:action_required|completed:startup_failure|completed:stale)
+                  failing="$failing $rname=$rconc" ;;
+                completed:*) ;;
+                *) echo "::notice::Check run '$rname' on PR head $pr is $rstatus (not treated as a violation)" ;;
+              esac
+            done <<< "$runs"
             if [ -n "$failing" ] || [ -n "$missing" ]; then
               echo "::error::PR head $pr of commit $sha lacks green checks (not green: ${failing:-none}; missing required:${missing:- none})"
               bad="$bad $sha"

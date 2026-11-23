@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | Accepted |
-| **Last updated** | 2026-11-23 (ADR-0002: agent-merged PRs, human decisions via Discussions) |
+| **Last updated** | 2026-11-23 (public repository, `protect-main` ruleset, owner decisions D1–D6) |
 | **Related** | [Security Model](security-model.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) · [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) |
 
 ## 1. Purpose and scope
@@ -140,9 +140,9 @@ Engineering Infrastructure is the substrate under every other subsystem: reposit
 **Phase 1 implementation:**
 
 - Issue forms.
-- GitHub Discussions with the categories **Decisions** and **Visual review** (until they exist, `General` with the `[Decision]` and `[Visual]` title prefixes).
+- GitHub Discussions with the categories **Decisions** (answerable) and **Visual review**, which now exist. Decision threads keep the `[Decision]` title prefix.
 - A label taxonomy (`state:*`, `risk:*`, `autonomy:*`, `needs-human`, `agents:halt`).
-- Required reviewers on GitHub Environments for production deployments, when the plan supports it.
+- Required reviewers on GitHub Environments for production deployments (available because the repository is public).
 
 **Evolution:** a read-only dashboard over GitHub and telemetry data. A dedicated UI only if GitHub proves insufficient.
 
@@ -233,15 +233,15 @@ This keeps Claude Code replaceable.
 
 **Phase 1 quality gates, run by CI:**
 
-"Blocking" means the merge policy and the `guard-merge` hook refuse to merge while the gate fails. Required status checks need rulesets, which are unavailable on the current plan (ADR-0002 §6).
+"Blocking" means the merge policy and the `guard-merge` hook refuse to merge while the gate fails. The ruleset `protect-main` already exists (PR required, linear history, squash only, no force push or deletion). Required status checks (`docs-check` and `secret-scan` from workflow `ci.yml`) will be added to it once CI exists; until then, blocking on checks is enforced by the merge policy and the hook, not by the server (ADR-0002 §6).
 
 | Gate | Tooling (indicative) | Blocking |
 |---|---|---|
 | Lint, format, type check | Project-specific | Yes |
 | Unit and integration tests, with a coverage threshold | Project-specific | Yes |
 | End-to-end tests | Playwright | Yes, for UI-affecting changes |
-| Static analysis (SAST) | Semgrep now; CodeQL when the plan supports it | Yes, on high severity |
-| Secret detection | gitleaks (CI and pre-commit) now; GitHub secret scanning when the plan supports it | Yes |
+| Static analysis (SAST) | CodeQL when code in a supported language exists; Semgrep optional | Yes, on high severity |
+| Secret detection | GitHub secret scanning with push protection (enabled), plus gitleaks (CI job `secret-scan`, and pre-commit) as defense in depth | Yes |
 | Dependency vulnerabilities | Dependabot alerts plus an audit step in CI (for example `npm audit` or `pip-audit`) | Yes, on new high-severity vulnerabilities |
 | Spec traceability check | Custom script (the PR references a spec) | Yes |
 | Independent AI review | `reviewer` (fresh context); `security-reviewer` for R2–R3 | Yes |
@@ -274,7 +274,7 @@ There is no routine human code review. Agents merge when the merge policy is sat
 
 **Phase 1 implementation:**
 
-- GitHub repository rulesets (protected `main`, required checks, no force push) **when the plan supports them**. The repository is currently private on GitHub Free, where rulesets are unavailable, so the compensating controls of ADR-0002 §6 apply.
+- GitHub repository ruleset `protect-main`, **active** on the default branch with no bypass actors: deletion blocked, force pushes blocked, linear history, PR required (0 approvals), squash only. Required status checks are added once CI exists. The repository is public, with secret scanning, push protection and Dependabot alerts enabled. The compensating controls of ADR-0002 §6 still apply, because agents act through the owner's admin account until the GitHub App exists.
 - GitHub Actions on ephemeral runners.
 - A dedicated GitHub App identity for agents (interim: the owner's account, ADR-0002 §2 and Security Model §6).
 - A devcontainer for local reproducibility.
@@ -346,7 +346,7 @@ A human decision never merges a PR by itself. After the decision, the PR returns
 
 **Independence:** `reviewer` runs in a fresh context. It never sees the implementer's reasoning, only the spec, the diff and the evidence. It can be configured to use a different model.
 
-**Model selection:** each role's model is configuration, not code. Indicative defaults: a top-tier model for `planner` and the review roles, a balanced model for `implementer` and `test-author`, and a fast model for triage.
+**Model selection:** each role's model is configuration, not code. **Model policy** (owner decision D5, [Discussion #3](https://github.com/albergm02/agent-factory/discussions/3)): Opus 5.5 is used only for the `orchestrator` role. All other roles use the cheapest adequate model (Sonnet 5.5 or Haiku 5.5). Opus 5.5 is forbidden for every other role. There are no numeric USD budget caps. Use Sonnet 5.5 where reasoning quality matters (for example `planner`, `implementer`, `reviewer`, `security-reviewer`) and Haiku 5.5 for simple, mechanical roles, as long as the evals show it is adequate.
 
 ## 10. Capability selection guide
 

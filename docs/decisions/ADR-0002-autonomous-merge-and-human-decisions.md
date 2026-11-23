@@ -130,12 +130,12 @@ Any PR that touches them is classified **R3**, and:
 
 | Control | Type | Status |
 |---|---|---|
-| Claude Code permission rules: deny pushes to `main` (any refspec), force pushes, `gh pr merge --admin`, `gh repo edit`/`delete`, `gh secret`, `gh workflow`. `gh api` is **unrestricted** by owner decision H1 ([Discussion #7](https://github.com/albergm02/agent-factory/discussions/7), option C, confirmed in session 2026-11-23); the specific controls below still block API merges and the removal of `agents:halt` | Preventive (agent side) | Implemented (PR #9) |
-| Hooks `guard-merge` (covering `gh pr merge`, `gh api …/merge` and MCP merge tools) and `guard-labels` (never remove `agents:halt`), plus `guard-branch`, `guard-protected-paths` and `guard-dangerous-commands` | Preventive (agent side) | Implemented (PR #9) |
+| Claude Code permission rules: deny pushes to `main` (any refspec), force pushes, `gh pr merge --admin`, `gh repo edit`/`delete`, `gh secret`, `gh workflow`. `gh api` is **unrestricted** by owner decision H1 ([Discussion #7](https://github.com/albergm02/agent-factory/discussions/7), option C, confirmed in session 2026-11-23); the specific controls below still block API merges and the removal of `agents:halt` | Preventive (agent side) | Implemented (PR #10) |
+| Hooks `guard-merge` (covering `gh pr merge`, `gh api …/merge` and MCP merge tools) and `guard-labels` (never remove `agents:halt`), plus `guard-branch`, `guard-protected-paths` and `guard-dangerous-commands` | Preventive (agent side) | Implemented (PR #10) |
 | GitHub secret scanning with push protection, and Dependabot alerts | Preventive and detective (server side) | Enabled 2026-11-23 |
 | gitleaks in CI plus a pre-commit hook, as defense in depth | Preventive and detective | To implement in F1 |
 | `main-integrity` workflow on every push to `main`: verifies the commit comes from a merged PR with green checks; otherwise opens an `[Alert]` Discussion | Detective | To implement in F1 |
-| Agent audit log of created comments and merges (`audit-tool-use` hook, local file `.claude/audit/agent-audit.jsonl`) | Detective | Implemented (PR #9); the check in §2 rule 3 against the log is not automated yet |
+| Agent audit log of created comments and merges (`audit-tool-use` hook, local file `.claude/audit/agent-audit.jsonl`) | Detective | Implemented (PR #10); the check in §2 rule 3 against the log is not automated yet |
 | Repository ruleset `protect-main`: deletion blocked, force pushes blocked, linear history, PR required (0 approvals), squash only, no bypass actors | Preventive (server side) | Active since 2026-11-23; required status checks `docs-check` and `secret-scan` to be added once CI exists |
 | Merge-policy checklist recorded as a PR comment before every merge | Audit | From now on |
 | Owner can halt everything with the `agents:halt` label or by revoking access | Corrective | Available |

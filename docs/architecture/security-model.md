@@ -129,26 +129,33 @@ Permissions are configured in `.claude/settings.json`, which is versioned and pr
 | Rule type | Phase 1 policy (indicative) |
 |---|---|
 | `deny` | `Read(.env*)`, `Read(**/*.pem)`, `Read(**/*.key)`, `Read(~/.ssh/**)`, `Read(~/.aws/**)`, `Bash(git push --force*)`, `Bash(git push * main*)`, `Bash(git push *:main*)`, `Bash(gh pr merge * --admin*)`, `Bash(gh repo edit*)`, `Bash(gh repo delete*)`, `Bash(gh secret *)`, `Bash(gh workflow *)`, `Bash(curl *)`, `Bash(wget *)` |
-| `ask` | `Bash(gh api *)` in interactive sessions (unattended runs: deny). Ask and deny rules take precedence over allow rules, so allow entries cannot carve out exceptions; the endpoint allowlist (read-only and Discussion endpoints) is enforced by a `PreToolUse` hook. Also: any MCP tool with side effects; dependency install commands; `Bash(git push*)` at L1; edits to guardrail files (ADR-0002 §5) outside tasks scoped to guardrails |
+| `ask` | Dependency install commands (`npm`, `pnpm`, `yarn`, `pip`). Ask and deny rules take precedence over allow rules, so allow entries cannot carve out exceptions. Not yet configured: any MCP tool with side effects; `Bash(git push*)` at L1; edits to guardrail files (ADR-0002 §5) outside tasks scoped to guardrails (the `guard-protected-paths` hook blocks them in the main checkout instead) |
 | `allow` | Read and search within the workspace; project build, test and lint commands; edits within the role's allowed paths |
 
-- **Per-role tool lists:** each subagent definition declares a minimal `tools` list. Read-only roles (`reviewer`, `security-reviewer`) have no write or execute tools. Only `orchestrator` holds the Agent tool (delegation depth 1; see [System Overview §9](system-overview.md#9-agent-model)).
+- **Per-role tool lists:** each subagent definition declares a minimal `tools` list. The read-only roles (`reviewer`, `security-reviewer`) and `triage` have no `Edit` or `Write` tools, but they do have `Bash`, which their prompts restrict to read-only `git` and `gh` inspection. That restriction is enforced by the prompt only; the hooks (§8: `guard_*` and the audit hook) are the backstop (residual risk, §17). Only the main session holds the Agent tool (delegation depth 1; see [System Overview §9](system-overview.md#9-agent-model)).
+- **`gh api` is unrestricted** by owner decision H1 ([Discussion #7](https://github.com/albergm02/agent-factory/discussions/7), option C, confirmed in session 2026-11-23). API and MCP merges and the removal of `agents:halt` remain blocked by hooks (§8). Accepted risk: a mistaken or compromised agent could change repository settings, rulesets or secrets via the API using the owner's account until the GitHub App (D3) exists (§17).
+- **Status:** the deny and ask rules above are implemented in `.claude/settings.json` (PR #10), except the `ask` entries listed as not yet configured. Permission rules match command text only (for example `Bash(curl *)` does not match `/usr/bin/curl`), so the hooks and the sandbox are the primary controls.
 - **Permission mode:** non-interactive runs never use modes that bypass permissions.
 - **Model policy** (owner decision D5, [Discussion #3](https://github.com/albergm02/agent-factory/discussions/3)): Opus 5.5 is used only for the `orchestrator` role. All other roles use the cheapest adequate model (Sonnet 5.5 or Haiku 5.5). Opus 5.5 is forbidden for every other role. There are no numeric USD budget caps.
 
 ## 8. Security hooks
 
-Hooks are deterministic, versioned and protected. A hook that exits with code 2 blocks the tool call before permission rules are evaluated. Hooks are configured to **fail closed** (a hook error blocks the action).
+Hooks are deterministic, versioned and protected. A hook that exits with code 2 blocks the tool call before permission rules are evaluated. Hooks **fail closed**, in two layers:
 
-| Hook | Event | Purpose |
-|---|---|---|
-| `guard-protected-paths` | `PreToolUse` (Edit, Write, Bash) | Block writes to guardrail files (ADR-0002 §5) unless the Task Envelope declares `scope: guardrails` |
-| `guard-dangerous-commands` | `PreToolUse` (Bash) | Block destructive or exfiltration patterns (force push, recursive delete outside the workspace, piping to remote hosts, credential helpers) |
-| `guard-branch` | `PreToolUse` (Bash `git`) | Allow commits and pushes only on the task's own topic branch, never on `main` |
-| `guard-merge` | `PreToolUse` (Bash `gh pr merge`, Bash `gh api …/merge`, MCP merge tools) | Block the merge unless the PR has green checks, a merge-policy comment and no `needs-human` or `agents:halt` label |
-| `guard-labels` | `PreToolUse` (Bash `gh` label edits, `gh api` label endpoints, MCP label tools) | Block any removal of `agents:halt`; allow removing `needs-human` only when a recorded decision is linked |
-| `audit-tool-use` | `PostToolUse` | Emit a structured audit event (tool, target, decision, correlation IDs) |
-| `budget-check` | `PreToolUse` / `Stop` | Stop the run when the turn or time budget is exhausted, or when any cost limit the owner has set (none today, per D5) is reached |
+- inside each hook, an error while checking an action in the hook's guarded category blocks it (exit 2). If a hook cannot even classify its input, it allows the call and writes a warning to the audit log, so a hook bug cannot lock up unrelated tool use;
+- in `.claude/settings.json`, every `PreToolUse` hook sets `"onFailure": "block"` (Claude Code v2.1.295 or later), so a hook that cannot start, times out, or exits with a code other than 0 or 2 denies the call. Without it, such failures are non-blocking.
+
+Hooks run through `.claude/hooks/run.sh`, which picks `python3` or `python` and works on Git Bash (Windows) and Linux. Implemented in PR #10 (tests in `tests/hooks/`, CI job `hooks-test`).
+
+| Hook | Event | Purpose | Status |
+|---|---|---|---|
+| `guard-protected-paths` | `PreToolUse` (Edit, Write, MultiEdit, NotebookEdit, Bash) | Block writes to guardrail files (ADR-0002 §5) in the session's **main checkout**; the same paths in other git worktrees (feature branches that go through PR review) are allowed. Any `.claude/settings.local.json` is always blocked. Bash detection is best effort (redirections, `tee`, `sed -i`, `cp`, `mv`) | Implemented (PR #10) |
+| `guard-dangerous-commands` | `PreToolUse` (Bash) | Block destructive or exfiltration patterns (recursive delete outside the repository, `git clean -x` in the main checkout, piping downloads to a shell, `chmod 777`, credential helpers, history rewriting, `git push --mirror`) | Implemented (PR #10) |
+| `guard-branch` | `PreToolUse` (Bash `git`) | Block commits while `main` is checked out, pushes whose refspec targets `main`, and force pushes. It does not check that the branch is the task's own | Implemented (PR #10) |
+| `guard-merge` | `PreToolUse` (Bash `gh pr merge`, Bash `gh api …/merge`, MCP merge tools) | Block the merge unless the PR has green checks (including `docs-check` and `secret-scan`), a merge-policy checklist comment by the owner or a collaborator and no `needs-human` or `agents:halt` label; squash only, no `--admin` or `--auto`. API and MCP merges are always blocked | Implemented (PR #10) |
+| `guard-labels` | `PreToolUse` (Bash `gh` label edits, `gh api` label endpoints, MCP label tools) | Block any removal of `agents:halt`. Removing `needs-human` is allowed; the "recorded decision linked" condition is a policy rule, not checked by the hook | Implemented (PR #10) |
+| `audit-tool-use` | `PostToolUse` | Append a JSON line to `.claude/audit/agent-audit.jsonl` (git-ignored, local) for every GitHub-writing command (`gh pr` and `gh issue` writes, `gh api` writes, `git push`, MCP write tools): timestamp, tool, redacted command, cwd, and the comment, discussion and PR URLs and node IDs found in the response. It never fails | Implemented (PR #10) |
+| `budget-check` | `PreToolUse` / `Stop` | Stop the run when the turn or time budget is exhausted, or when any cost limit the owner has set (none today, per D5) is reached | Not yet implemented |
 
 Hooks complement the sandbox; they do not replace it. Pattern-based command filtering can be bypassed, so network and filesystem isolation (§9) remain the primary controls for T2 and T3.
 
@@ -297,7 +304,9 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 | A compromised agent session holding the owner's credentials can bypass every agent-side control (direct API calls, disabling workflows, editing labels, forging approvals) | Shared identity with admin scopes; the ruleset is editable with that scope | Only the GitHub App identity (D3, an H2 decision) closes this. Until then, the controls protect against agent mistakes, not against compromise |
 | Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker (convention only); ordering rule (an approval counts only if posted after the latest request); audit log of agent-created comments; owner cross-check of H1, H2, H3 and H6 decisions; owner-authorship check; create the App (D3) |
 | Guardrail tightening vs. relaxing judged by an agent | No deterministic classifier | Uncertain changes count as relaxing; guardrail change log reviewed by the owner |
-| Hook pattern bypass | String matching is incomplete | The sandbox and permissions are primary; hooks are secondary |
+| Hook pattern bypass | String matching is incomplete (for example a script that writes a guardrail file, or `/usr/bin/curl`) | The sandbox and permissions are primary; hooks are secondary |
+| Read-only `Bash` for `reviewer`, `security-reviewer` and `triage` is enforced by prompt only | These roles need `Bash` for `git` and `gh` inspection, and Claude Code cannot restrict a subagent's `Bash` to read-only commands | The `guard_*` hooks and the audit hook apply to every role; no `Edit` or `Write` tools; reviewer output is checked by the merge policy |
+| `gh api` is unrestricted (owner decision H1, [Discussion #7](https://github.com/albergm02/agent-factory/discussions/7), option C) | Agents use the owner's account until the GitHub App (D3) exists | A mistaken or compromised agent could change repository settings, rulesets or secrets via the API. Only API and MCP merges and the removal of `agents:halt` are blocked by hooks. Accepted by the owner; closed by the GitHub App identity (D3) |
 | Rapid evolution of Claude Code, MCP and A2A | Features and defaults change | Pin versions; record verification dates; review this model quarterly and on every major upgrade |
 | Single human decision-maker | Availability | Agents continue with independent work while decisions are pending; decisions are batched in Discussions |
 

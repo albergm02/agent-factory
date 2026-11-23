@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft — pending approval |
-| **Last updated** | 2026-11-23 |
-| **Related** | [System Overview](system-overview.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) |
+| **Status** | Accepted |
+| **Last updated** | 2026-11-23 (ADR-0002: agent-merged PRs, human decisions via Discussions) |
+| **Related** | [System Overview](system-overview.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) · [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) |
 
 ## 1. Purpose, scope and assumptions
 
@@ -13,18 +13,21 @@ This document defines how Agent Factory protects its assets while AI agents act 
 **Assumptions:**
 
 - A1. Agents can be manipulated by any content they read. The model is never treated as a security boundary.
-- A2. Humans with code-owner rights are trusted. Their accounts use MFA.
+- A2. The repository owner is trusted. The owner's account uses MFA.
 - A3. GitHub, the model provider and the CI runners are trusted infrastructure, within their documented guarantees.
 - A4. Any third-party MCP server, Skill or dependency is untrusted until reviewed and pinned.
-- A5. Phase 1 operates on private repositories.
+- A5. Phase 1 operates on a private repository on the GitHub Free plan, so **server-side branch protection and rulesets are unavailable** ([ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) §6).
+- A6. Agents review and merge PRs themselves under the merge policy (ADR-0002 §1). There is no routine human code review.
 
 **Security objective:** a fully compromised agent session (for example through prompt injection) must not be able to:
 
-- merge code;
-- modify its own guardrails;
+- merge code that does not satisfy the merge policy without being detected;
+- relax its own guardrails;
 - read secrets;
 - reach unapproved network destinations;
 - exceed its budget.
+
+While server-side enforcement is unavailable, the first objective is met through prevention on the agent side plus detection after the fact, not through prevention on the server.
 
 ## 2. Assets
 
@@ -44,10 +47,10 @@ This document defines how Agent Factory protects its assets while AI agents act 
 ```mermaid
 flowchart LR
     subgraph T0[Trusted: humans]
-        H[Code owners]
+        H[Owner]
     end
     subgraph T1[Trusted infrastructure]
-        GH[GitHub<br/>rulesets · reviews · secrets]
+        GH[GitHub<br/>Discussions · checks · secrets]
         CI[Ephemeral CI runner]
     end
     subgraph T2[Constrained: agent execution]
@@ -61,17 +64,17 @@ flowchart LR
     end
     MP[Model provider API]
 
-    H -->|approve| GH
+    H -->|decide in Discussions| GH
     GH -->|scoped token| CI
     CI --> SB
-    SB -->|branch / PR only| GH
+    SB -->|branch / PR / merge under policy| GH
     SB <-->|HTTPS| MP
     U1 & U2 & U3 & U4 -.->|treated as data| SB
 ```
 
 **Key boundaries:**
 
-- **B1 (human ↔ agent):** merge, release and policy changes cross B1 only through human approval in GitHub.
+- **B1 (human ↔ agent):** must-human decisions (§13) cross B1 only through an explicit decision by the owner, recorded in a GitHub Discussion or given directly in an interactive session (ADR-0002 §2). Routine merges do not cross B1.
 - **B2 (agent ↔ secrets):** secrets never enter the agent's context or filesystem view.
 - **B3 (agent ↔ network):** egress only to allowlisted destinations.
 - **B4 (untrusted content ↔ agent instructions):** external content is data, never instructions.
@@ -93,7 +96,9 @@ The threats below are organized with STRIDE and mapped to the OWASP Top 10 for L
 | T9 | **Repudiation**: unattributable agent actions | R | — | Changes committed under a human identity | §6, §15 |
 | T10 | **Sensitive data in telemetry** | I | LLM02 | Prompts or tool inputs containing secrets exported to OTel | §14 |
 | T11 | **Inter-agent abuse** (future A2A) | S, E | — | An external agent impersonates a trusted role | Out of scope until A2A is adopted (requires an ADR) |
-| T12 | **Over-reliance on AI review** | — | LLM09 | The reviewer agent misses a defect it shares with the implementer | Human review stays mandatory; escaped-defect metric |
+| T12 | **Over-reliance on AI review** | — | LLM09 | The reviewer agent misses a defect it shares with the implementer | Fresh-context reviewer (optionally on a different model); `security-reviewer` on R2–R3; evals with seeded defects; escaped-defect metric; cheap reverts |
+| T13 | **Merge-policy bypass** | T, E | LLM06 | An agent merges with failing checks or pushes directly to `main` | Permission deny rules (§7); `main-integrity` detection (§12); rulesets once available |
+| T14 | **Forged human decision** | S | — | A compromised agent posts an "APPROVED" comment under the shared owner account | Agent comment marker; approvals valid only when posted after the request; GitHub App identity (H2 decision); guardrail change log |
 
 ## 5. Control principles
 
@@ -101,16 +106,17 @@ The threats below are organized with STRIDE and mapped to the OWASP Top 10 for L
 2. **Least privilege.** Per role, per task, and time-bound.
 3. **Untrusted input is data.** No control may rely on the model refusing malicious instructions.
 4. **Fail closed.** If a hook, policy check or gate errors, the action is blocked.
-5. **Guardrails are out of reach.** No agent identity can change the configuration that constrains it.
+5. **Guardrails only get stricter without a human.** Agents may tighten the configuration that constrains them, but never relax it (ADR-0002 §5).
 6. **Everything is attributable.** Every action is traceable to an identity, a task and a run.
 
 ## 6. Identity and access
 
-- Agents act through a **dedicated GitHub App** (for example `agent-factory-bot`). Personal access tokens are never used. The App's installation tokens are short-lived.
-- **App permissions (phase 1 maximum):** contents read/write, pull requests read/write, issues read/write, checks read, metadata read. Explicitly **not** granted: administration, workflows, secrets, environments, members.
-- **Separation of author and approver:** commits and PRs authored by the App can only be approved by human code owners. The App's own reviews never count toward required approvals.
-- **Branch scope:** agents push only to `agent/*` branches. Rulesets block direct pushes to `main` and release branches for every identity, including administrators where the plan supports it.
-- **Human accounts:** MFA required; code-owner membership reviewed quarterly.
+- **Target state:** agents act through a **dedicated GitHub App** (for example `agent-factory-bot`). Personal access tokens are never used. The App's installation tokens are short-lived.
+- **Interim state (until the owner creates the App, an H2 decision):** agents act through the owner's authenticated `gh` session. Every comment written by an agent starts with `🤖 Agent Factory:`. Threat T14 applies.
+- **App permissions (phase 1 maximum):** contents read/write, pull requests read/write, issues read/write, discussions read/write, checks read, metadata read. Explicitly **not** granted: administration, workflows, secrets, environments, members.
+- **Separation of duties:** the author and the reviewer are separate agent contexts. Merges happen only when the merge policy is satisfied. Human decisions come only from the owner, through the protocol in ADR-0002 §2.
+- **Branch scope:** agents push only to topic branches (`agent/*`, `docs/*`, `feat/*`, `fix/*`, `chore/*`). They never push to `main` directly; every change reaches `main` through a merged PR. Once the plan supports it, rulesets will enforce this on the server.
+- **Owner account:** MFA required.
 
 ## 7. Claude Code permission policy
 
@@ -118,8 +124,8 @@ Permissions are configured in `.claude/settings.json`, which is versioned and pr
 
 | Rule type | Phase 1 policy (indicative) |
 |---|---|
-| `deny` | `Read(.env*)`, `Read(**/*.pem)`, `Read(**/*.key)`, `Read(~/.ssh/**)`, `Read(~/.aws/**)`, `Bash(git push --force*)`, `Bash(git push * main*)`, `Bash(curl *)`, `Bash(wget *)`; edits to `.claude/**`, `.github/**`, `CODEOWNERS` |
-| `ask` | Any MCP tool with side effects; dependency install commands; `Bash(git push*)` at L1 |
+| `deny` | `Read(.env*)`, `Read(**/*.pem)`, `Read(**/*.key)`, `Read(~/.ssh/**)`, `Read(~/.aws/**)`, `Bash(git push --force*)`, `Bash(git push * main*)`, `Bash(gh pr merge * --admin*)`, `Bash(gh repo edit*)`, `Bash(gh repo delete*)`, `Bash(gh secret *)`, `Bash(curl *)`, `Bash(wget *)` |
+| `ask` | Any MCP tool with side effects; dependency install commands; `Bash(git push*)` at L1; edits to guardrail files (ADR-0002 §5) outside tasks scoped to guardrails |
 | `allow` | Read and search within the workspace; project build, test and lint commands; edits within the role's allowed paths |
 
 - **Per-role tool lists:** each subagent definition declares a minimal `tools` list. Read-only roles (`reviewer`, `security-reviewer`) have no write or execute tools. Only `orchestrator` holds the Agent tool (delegation depth 1; see [System Overview §9](system-overview.md#9-agent-model)).
@@ -131,9 +137,10 @@ Hooks are deterministic, versioned and protected. A hook that exits with code 2 
 
 | Hook | Event | Purpose |
 |---|---|---|
-| `guard-protected-paths` | `PreToolUse` (Edit, Write, Bash) | Block writes to `.claude/**`, `.github/**`, `CODEOWNERS`, `CLAUDE.md` and hook scripts |
+| `guard-protected-paths` | `PreToolUse` (Edit, Write, Bash) | Block writes to guardrail files (ADR-0002 §5) unless the Task Envelope declares `scope: guardrails` |
 | `guard-dangerous-commands` | `PreToolUse` (Bash) | Block destructive or exfiltration patterns (force push, recursive delete outside the workspace, piping to remote hosts, credential helpers) |
-| `guard-branch` | `PreToolUse` (Bash `git`) | Allow commits and pushes only on the task's own `agent/*` branch |
+| `guard-branch` | `PreToolUse` (Bash `git`) | Allow commits and pushes only on the task's own topic branch, never on `main` |
+| `guard-merge` | `PreToolUse` (Bash `gh pr merge`) | Block the merge unless the PR has green checks, a merge-policy comment and no `needs-human` or `agents:halt` label |
 | `audit-tool-use` | `PostToolUse` | Emit a structured audit event (tool, target, decision, correlation IDs) |
 | `budget-check` | `PreToolUse` / `Stop` | Stop the run when the turn, time or cost budget is exhausted |
 
@@ -165,7 +172,7 @@ Hooks complement the sandbox; they do not replace it. Pattern-based command filt
 |---|---|
 | **Allowlist** | Only MCP servers and Skills listed in a versioned registry (`.claude/` configuration, protected) can be loaded |
 | **Pinning** | MCP servers are pinned to exact versions or digests. Skills are vendored in the repository or pinned by commit |
-| **Review** | Adding or upgrading a capability requires a PR approved by a code owner, plus a short ADR for any new MCP server |
+| **Review** | Adding or upgrading a capability requires a PR under the merge policy, with a `security-reviewer` pass. A new MCP server or external service that receives code or data is a human decision (H7) and needs a short ADR |
 | **Trust tiers** | *First-party* (written in this repo) · *Vetted third-party* (reviewed and pinned) · *Untrusted* (not loadable) |
 | **Least scope** | Each MCP server gets its own credentials with minimal scopes and is enabled only for the roles that need it |
 | **Tool-description review** | MCP tool names and descriptions are reviewed for injected instructions on every upgrade |
@@ -174,42 +181,49 @@ Hooks complement the sandbox; they do not replace it. Pattern-based command filt
 
 ## 12. CI/CD security
 
-- **Rulesets on `main`:**
+- **Rulesets on `main` (when the plan supports them; currently unavailable):**
   - PRs are required;
   - required status checks;
-  - required code-owner review;
-  - stale approvals are dismissed on new commits;
   - linear history;
   - no force pushes or deletions.
-- **CODEOWNERS:** humans own `.claude/**`, `.github/**`, `CLAUDE.md`, `CODEOWNERS`, `docs/decisions/**` and `docs/architecture/**`.
+  - No required human review: agents merge under the merge policy (ADR-0002).
+- **Compensating controls while rulesets are unavailable:**
+  - permission deny rules (§7) and the `guard-branch` and `guard-merge` hooks (§8);
+  - a **`main-integrity` workflow** on every push to `main`, which verifies that the commit comes from a merged PR with green checks and opens an `[Alert]` Discussion otherwise;
+  - a merge-policy checklist comment on every PR.
+- **CODEOWNERS:** used for notifications and as the list of guardrail owners, not for required reviews.
 - **Trusted triggers only:** agent workflows start only from events created by trusted actors. A workflow checks `author_association` (OWNER, MEMBER or COLLABORATOR) or the presence of a label that only maintainers can apply.
 - **No `pull_request_target` with checkout of PR code.** Workflows that run untrusted code get a read-only `GITHUB_TOKEN` and no secrets.
 - **Minimal `GITHUB_TOKEN`:** a `permissions:` block is declared on every workflow, read-only by default.
-- **Pinned actions:** third-party actions are pinned by commit SHA. Dependabot keeps them updated through reviewed PRs.
-- **Environments:** release and deploy jobs run in GitHub Environments that require human reviewers.
+- **Pinned actions:** third-party actions are pinned by commit SHA. Dependabot keeps them updated through PRs that follow the merge policy.
+- **Environments:** production deploy jobs run in GitHub Environments with required reviewers, when the plan supports it. Until then, production deployment is a human decision taken in a Discussion (H5).
 
 ## 13. Autonomy and human approval matrix
 
 Effective autonomy is `min(risk-class ceiling, earned level, requested level)` (see [System Overview §13](system-overview.md#13-autonomy-levels-and-risk-classes)).
 
-| Risk class | Phase 1 ceiling | Long-term ceiling |
+| Risk class | Phase 1 ceiling | Extra requirements before an agent merges |
 |---|---|---|
-| R0 docs and tests | L2 | L3 (auto-merge when gates pass and evals meet thresholds) |
-| R1 covered app code | L2 | L2 (L3 only by a future ADR) |
-| R2 dependencies, schemas, APIs | L2 | L2 |
-| R3 security, CI/CD, infra, data, agent config | L2 | **L2, permanently** |
+| R0 docs and tests | L3 | Independent review |
+| R1 covered app code | L3 | Independent review; visual review if user-facing |
+| R2 dependencies, schemas, APIs | L3 | Independent review plus `security-reviewer`; permissive license |
+| R3 security, CI/CD, infra, data, agent config | L3 | Independent review plus `security-reviewer`; guardrail-change handling (ADR-0002 §5) |
 
-**Always requires human approval, at any level:**
+**Always requires a human decision, at any level** (ADR-0002 §3, raised through a Discussion):
 
-1. Merging to `main` (phase 1), and any merge of R1 or above.
-2. Releases and deployments.
-3. Changes to guardrails: `.claude/**`, hooks, `.github/**`, `CODEOWNERS`, rulesets, `CLAUDE.md`.
-4. Adding or upgrading dependencies, MCP servers or Skills.
-5. Creating, rotating or using new secrets or credentials.
-6. Accepting or changing an ADR.
-7. Destructive or irreversible data operations, including migrations.
-8. Exceeding a task or monthly budget.
-9. Raising any role's autonomy level or delegation depth.
+| # | Decision |
+|---|---|
+| H1 | Relaxing guardrails: permissions, hooks, sandbox, CI gates, the merge policy, this list, autonomy levels, delegation depth |
+| H2 | Secrets, credentials and access: creating or rotating secrets, GitHub App permissions, collaborators, tokens |
+| H3 | Repository and account settings: visibility, plan, Discussions categories, branch protection |
+| H4 | Spending money: plan upgrades, paid services, exceeding the task or monthly budget |
+| H5 | Production deployment and external publication: packages, public releases, making anything public |
+| H6 | Destructive or irreversible operations: deleting data, repositories, releases or tags; rewriting the history of `main` |
+| H7 | New third parties receiving code or data: new MCP servers or external services |
+| H8 | Product direction: changing the project goals or principles; reversing an earlier human decision |
+| H9 | Licensing: the project license; dependencies with copyleft or unknown licenses |
+| H10 | Visual and UX judgement on user-facing changes |
+| H11 | High-stakes uncertainty: any case where the agent is not confident and reversing a mistake would be costly |
 
 ## 14. Data and privacy
 
@@ -228,7 +242,7 @@ Every agent action is traceable through:
 | What | Commits, PR diff, check runs |
 | Why | Linked Work Request (issue) and spec |
 | How | Audit hook events and OTel signals with `af.task.id`, `af.run.id`, `af.agent.role` |
-| Approved by | PR reviews and environment approvals |
+| Approved by | Merge-policy comment and reviewer verdict on the PR; Discussion link for human decisions |
 
 The GitHub audit log is retained according to the plan. Agent audit events are exported to the telemetry backend.
 
@@ -248,7 +262,8 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 - budget overruns;
 - unusual push patterns;
 - secret-scanning alerts;
-- unexpected changes to protected paths.
+- unexpected changes to protected paths;
+- `main-integrity` alerts (commits on `main` that did not come from a policy-compliant PR).
 
 **Agent incident runbook (outline):**
 
@@ -265,10 +280,13 @@ The GitHub audit log is retained according to the plan. Agent audit events are e
 | Residual risk | Why it remains | Mitigation |
 |---|---|---|
 | Novel prompt-injection techniques | No complete defense exists | Assume compromise; deterministic controls bound the blast radius |
-| Shared blind spots between AI implementer and AI reviewer | Correlated model behavior | Mandatory human review; seeded-defect evals; optional different reviewer model |
+| Shared blind spots between AI implementer and AI reviewer, with no human code review | Correlated model behavior; owner decision (ADR-0002) | Fresh-context reviewer; optional different reviewer model; seeded-defect evals; small PRs; fast revert; demotion on escaped defects |
+| No server-side enforcement on GitHub Free (private) | Plan limitation | Agent-side prevention plus `main-integrity` detection; the owner may go public or upgrade (H3/H4) |
+| Shared GitHub identity between owner and agents | No GitHub App yet | Comment marker; ordering rule for approvals; create the App (H2) |
+| Guardrail tightening vs. relaxing judged by an agent | No deterministic classifier | Uncertain changes count as relaxing; guardrail change log reviewed by the owner |
 | Hook pattern bypass | String matching is incomplete | The sandbox and permissions are primary; hooks are secondary |
 | Rapid evolution of Claude Code, MCP and A2A | Features and defaults change | Pin versions; record verification dates; review this model quarterly and on every major upgrade |
-| Single human approver (if applicable) | Availability and fatigue | Small PRs; clear evidence in PRs; escalation SLA |
+| Single human decision-maker | Availability | Agents continue with independent work while decisions are pending; decisions are batched in Discussions |
 
 This model is reviewed **quarterly**, after any security incident, and before any change to an autonomy ceiling.
 

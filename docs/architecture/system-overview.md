@@ -2,9 +2,9 @@
 
 | | |
 |---|---|
-| **Status** | Draft — pending approval |
-| **Last updated** | 2026-11-23 |
-| **Related** | [Security Model](security-model.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) |
+| **Status** | Accepted |
+| **Last updated** | 2026-11-23 (ADR-0002: agent-merged PRs, human decisions via Discussions) |
+| **Related** | [Security Model](security-model.md) · [ADR-0001](../decisions/ADR-0001-architecture.md) · [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md) |
 
 ## 1. Purpose and scope
 
@@ -28,8 +28,8 @@ Security controls are specified in the [Security Model](security-model.md). The 
 
 | Priority | Quality goal | Meaning |
 |---|---|---|
-| 1 | **Safety and control** | No critical action without human approval. Guardrails are deterministic and cannot be modified by agents. |
-| 2 | **Quality** | Every change is specified, tested and independently reviewed before merge. |
+| 1 | **Safety and control** | No must-human decision (ADR-0002 §3) without human approval. Agents cannot relax guardrails. |
+| 2 | **Quality** | Every change is specified, tested and independently reviewed by an agent before merge. |
 | 3 | **Traceability** | Every change can be traced: spec → task → agent run → PR → tests → release. |
 | 4 | **Autonomy** | Agents complete end-to-end work without human help inside their authorized envelope. |
 | 5 | **Portability** | The architecture does not depend on any particular target project, and the agent runtime can be replaced. |
@@ -72,7 +72,7 @@ flowchart LR
     otel[(Telemetry backend<br/>OTLP)]
     target[(Target repositories)]
 
-    human -- requests, approvals, policies --> gh
+    human -- requests, decisions, visual feedback --> gh
     gh -- events --> core
     core -- branches, PRs, comments, status --> gh
     core -- prompts / completions --> model
@@ -81,7 +81,13 @@ flowchart LR
     core -- read / write via PR --> target
 ```
 
-Humans interact with Agent Factory **through GitHub**: they open issues, review PRs, approve environments and apply labels. Phase 1 has no separate UI.
+Humans interact with Agent Factory **through GitHub**:
+
+- they open issues;
+- they take must-human decisions and give visual feedback in **GitHub Discussions**;
+- they can halt agents with a label.
+
+Agents open, review and merge PRs themselves under the merge policy of [ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md). Phase 1 has no separate UI.
 
 ## 5. Container view
 
@@ -118,7 +124,8 @@ Engineering Infrastructure is the substrate under every other subsystem: reposit
 **Responsibilities:**
 
 - Intake of work.
-- Approval at critical gates.
+- Human decisions on the must-human list (ADR-0002 §3).
+- Visual and UX feedback.
 - Configuration of autonomy policies and risk classes.
 - Emergency stop.
 - Audit visibility.
@@ -126,16 +133,16 @@ Engineering Infrastructure is the substrate under every other subsystem: reposit
 **Exposes:**
 
 - *Work Request*, as a GitHub issue created from a template.
-- Approval decisions, as PR reviews, environment approvals and labels.
+- Decisions, as comments in GitHub Discussions that follow the decision protocol (ADR-0002 §2).
 
-**Consumes:** *Approval Request* and *Verdict*.
+**Consumes:** *Approval Request* (a Discussion) and *Verdict*.
 
 **Phase 1 implementation:**
 
 - Issue forms.
-- A label taxonomy (`state:*`, `risk:*`, `autonomy:*`, `agents:halt`).
-- CODEOWNERS.
-- Required reviewers on GitHub Environments.
+- GitHub Discussions with the categories **Decisions** and **Visual review** (until they exist, `General` with the `[Decision]` and `[Visual]` title prefixes).
+- A label taxonomy (`state:*`, `risk:*`, `autonomy:*`, `needs-human`, `agents:halt`).
+- Required reviewers on GitHub Environments for production deployments, when the plan supports it.
 
 **Evolution:** a read-only dashboard over GitHub and telemetry data. A dedicated UI only if GitHub proves insufficient.
 
@@ -206,7 +213,8 @@ This keeps Claude Code replaceable.
 **Governance:**
 
 - MCP servers and Skills are allowlisted and pinned.
-- Adding or changing a capability requires a PR approved by a code owner. See [Security Model §11](security-model.md#11-capability-governance).
+- Capabilities change only through PRs under the merge policy.
+- New third parties that receive code or data (for example new MCP servers), and any relaxation of guardrails, need a human decision. See [Security Model §11](security-model.md#11-capability-governance).
 
 **Evolution:** package the reusable roles, Skills and hooks as a Claude Code **plugin**, so they can be installed into target repositories.
 
@@ -234,8 +242,11 @@ This keeps Claude Code replaceable.
 | Secret scanning and push protection | GitHub | Yes |
 | Dependency review | GitHub | Yes, on new high-severity vulnerabilities |
 | Spec traceability check | Custom script (the PR references a spec) | Yes |
-| AI review | `reviewer` and `security-reviewer` subagents | Advisory in phase 1 |
-| Human review | CODEOWNERS | Yes |
+| Independent AI review | `reviewer` (fresh context); `security-reviewer` for R2–R3 | Yes |
+| Visual review | Playwright screenshots in a *Visual review* Discussion; owner's opinion | Yes, for user-facing changes |
+| Merge policy | Checklist comment on the PR (ADR-0002 §1) | Yes |
+
+There is no routine human code review. Agents merge when the merge policy is satisfied. Decisions on the must-human list escalate to a Discussion.
 
 ### 6.6 Observability & Knowledge
 
@@ -261,7 +272,7 @@ This keeps Claude Code replaceable.
 
 **Phase 1 implementation:**
 
-- GitHub repository rulesets: protected `main`, required checks, required code-owner review, no force push.
+- GitHub repository rulesets (protected `main`, required checks, no force push) **when the plan supports them**. The repository is currently private on GitHub Free, where rulesets are unavailable, so the compensating controls of ADR-0002 §6 apply.
 - GitHub Actions on ephemeral runners.
 - A dedicated GitHub App identity for agents.
 - A devcontainer for local reproducibility.
@@ -279,7 +290,7 @@ All contracts are versioned (`contract: <name>/v<major>`). Phase 1 represents th
 | **Capability Invocation** | RT → CAP | MCP JSON-RPC, Skill load, tool call | Native Claude Code mechanisms, mediated by permissions and hooks |
 | **Change Set + Evidence** | RT → QE | `branch`, `pr`, `spec_ref`, `tests_run[]`, `self_assessment`, `open_questions[]` | Pull request body (template) |
 | **Verdict** | QE → ORC/HCC | `result`, `findings[]{severity, location, rationale}`, `gates{}` | Check runs and review comments |
-| **Approval Request** | ORC → HCC | `action`, `risk_class`, `evidence_refs[]`, `alternatives[]`, `deadline` | PR review request, environment approval, or issue comment |
+| **Approval Request** | ORC → HCC | `action`, `risk_class`, `evidence_refs[]`, `alternatives[]`, `recommendation`, `reversibility` | GitHub Discussion (*Decisions* or *Visual review*), linked from the PR with the `needs-human` label |
 | **Telemetry** | All → OBS | OTel signals plus the attributes in §14 | OTLP |
 
 Role manifests (§9) and these contracts are designed so they can later be published as **A2A Agent Cards** (§16).
@@ -291,23 +302,26 @@ stateDiagram-v2
     [*] --> Intake
     Intake --> Triaged: orchestrator classifies risk
     Triaged --> Specified: planner drafts spec
-    Specified --> Planned: ⛔ human approves spec
+    Specified --> Planned: reviewer agent approves spec
+    Specified --> AwaitingHuman: must-human decision
     Planned --> Implementing
     Implementing --> Verifying: change set ready
     Verifying --> Implementing: gate failed (within retry budget)
     Verifying --> InReview: all gates green
     InReview --> Implementing: changes requested
-    InReview --> AwaitingApproval: AI review done
-    AwaitingApproval --> Merged: ⛔ human approves merge
-    Merged --> Released: ⛔ human approves release
+    InReview --> Merged: merge policy satisfied (agent merges)
+    InReview --> AwaitingHuman: must-human decision or visual review
+    AwaitingHuman --> Merged: ⛔ human decides in Discussion
+    AwaitingHuman --> Implementing: ⛔ human requests changes
+    Merged --> Released: agent releases (⛔ production or public release)
     Released --> [*]
     Implementing --> Escalated: budget exhausted / blocked
     Verifying --> Escalated: retry budget exhausted
-    Escalated --> Planned: human decides
-    Escalated --> [*]: human cancels
+    Escalated --> AwaitingHuman
+    AwaitingHuman --> [*]: ⛔ human cancels
 ```
 
-⛔ marks a human gate. Spec approval can be delegated for risk class R0 once the planner role reaches L3 (§13).
+⛔ marks a human decision, taken in a GitHub Discussion following the protocol in ADR-0002 §2. Every other transition is performed by agents.
 
 ## 9. Agent model
 
@@ -352,7 +366,7 @@ specs/<id>-<slug>/
 
 **Rules:**
 
-1. Implementation does not start until the spec is approved (human gate for R1 and above).
+1. Implementation does not start until the reviewer agent approves the spec. A spec that involves a must-human decision (ADR-0002 §3) also needs the human decision.
 2. Every PR references exactly one spec and the task IDs it implements.
 3. Every acceptance criterion maps to at least one automated test. CI checks the mapping.
 4. Specs change through PRs like code. Divergence between spec and code counts as a defect.
@@ -391,8 +405,8 @@ evals/
 | L0 | Advisor | Read and propose | Do everything |
 | L1 | Assisted | Make local changes; each effectful action is approved | Approve each action |
 | L2 | Supervised | Create branches and PRs, run CI | Approve the spec and the merge |
-| L3 | Conditional | Auto-merge **R0** changes when all gates pass | Audit after the fact; approve everything above R0 |
-| L4 | Autonomous | Release | Out of scope |
+| L3 | Conditional | Approve specs and merge PRs when the merge policy is satisfied | Take must-human decisions; give visual feedback; audit after the fact |
+| L4 | Autonomous | Also deploy to production and publish | Out of scope (production and public releases are must-human) |
 
 **Risk classes** (assigned at triage; the highest applicable class wins):
 
@@ -405,9 +419,10 @@ evals/
 
 **Effective autonomy** = `min(ceiling for the risk class, level earned by the role through evals, level requested in the Work Request)`.
 
-- The **phase 1 ceiling is L2** for every class.
-- **R3 is capped at L2 permanently.**
-- The actions that always need a human are listed in [Security Model §13](security-model.md#13-autonomy-and-human-approval-matrix).
+- The **phase 1 ceiling is L3** for every class ([ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md)). The owner granted this level provisionally, before eval data existed.
+- **Demotion is evidence-based:** a role whose evals regress, or that causes an escaped defect or a guardrail incident, drops to L2 until the cause is fixed.
+- Risk class still matters: R2–R3 changes need a `security-reviewer` pass, and R3 guardrail changes follow ADR-0002 §5.
+- The decisions that always need a human are listed in [Security Model §13](security-model.md#13-autonomy-and-human-approval-matrix).
 
 ## 14. Observability
 
@@ -449,13 +464,13 @@ evals/
 
 | Artifact | Location | Owner | Updated when |
 |---|---|---|---|
-| Architecture decisions | `docs/decisions/ADR-NNNN-*.md` (MADR) | Humans (agents may draft) | Any significant or irreversible decision |
-| Architecture docs | `docs/architecture/` | Humans | When an ADR changes the architecture |
-| Specs | `specs/` | Planner drafts, humans approve | Per feature |
-| Project context | `CLAUDE.md` | Humans (protected path) | When conventions change |
-| Lessons learned | `docs/lessons/` | Orchestrator drafts, humans approve | After failed, escalated or reverted runs |
+| Architecture decisions | `docs/decisions/ADR-NNNN-*.md` (MADR) | Agents draft and accept; humans decide those on the must-human list | Any significant or irreversible decision |
+| Architecture docs | `docs/architecture/` | Agents, under the merge policy | When an ADR changes the architecture |
+| Specs | `specs/` | Planner drafts, reviewer agent approves | Per feature |
+| Project context | `CLAUDE.md` | Agents, under the merge policy | When conventions change |
+| Lessons learned | `docs/lessons/` | Orchestrator drafts, reviewer agent approves | After failed, escalated or reverted runs |
 
-Agents may *propose* knowledge updates. Persistent instructions such as `CLAUDE.md` and Skills are protected paths and change only through human-approved PRs, which guards against context poisoning.
+Persistent instructions such as `CLAUDE.md` and Skills change only through reviewed PRs. Reviewers check them for injected instructions, which guards against context poisoning. Changes that relax guardrails escalate to a human.
 
 ## 16. Future interoperability: A2A
 
@@ -475,6 +490,7 @@ A2A support will be considered when an external agent, or a second runtime, must
   skills/            # Skills
   settings.json      # shared permissions and hooks (protected)
 .github/
+  DISCUSSION_TEMPLATE/  # Decision and visual-review forms
   ISSUE_TEMPLATE/    # Work Request forms
   workflows/         # CI gates and agent triggers (protected)
   CODEOWNERS
@@ -493,9 +509,9 @@ CLAUDE.md
 
 | Phase | Goal | Exit criteria |
 |---|---|---|
-| **F0 Foundations** | Architecture, security model, ADR-0001 approved | Documents merged |
-| **F1 Vertical slice** | One issue → spec → PR → gates → human merge, at L2, on a pilot repository | 10 tasks completed end to end; metrics visible; no guardrail bypass |
-| **F2 Evidence** | Eval suites per role; L3 for R0 where earned | Eval thresholds met and stable across 2 model updates |
+| **F0 Foundations** | Architecture, security model, ADR-0001 and ADR-0002 accepted | Documents merged |
+| **F1 Vertical slice** | One issue → spec → PR → gates → independent review → agent merge, at L3, with human decisions via Discussions; CI and the compensating controls of ADR-0002 §6 | 10 tasks completed end to end; metrics visible; no guardrail bypass; no escaped critical defect |
+| **F2 Evidence** | Eval suites per role; data-driven demotion and promotion | Eval thresholds met and stable across 2 model updates |
 | **F3 Scale** | Plugin packaging, multiple repositories, orchestration service if needed, A2A if needed | Decided by ADRs based on F1 and F2 data |
 
 ## 19. Glossary

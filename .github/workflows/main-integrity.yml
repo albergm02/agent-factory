@@ -1,0 +1,85 @@
+name: main-integrity
+
+# Compensating control while branch rulesets are unavailable (security-model §12).
+# Verifies that every commit pushed to main is the merge commit of a PR merged
+# into main. If not, opens an [Alert] Discussion and fails the job.
+#
+# Edge cases:
+# - Merge, squash and rebase merges: GitHub sets merge_commit_sha to the commit
+#   on main for merge and squash. For rebase merges merge_commit_sha is the tip
+#   of the rebased commits only, so earlier rebased commits are flagged
+#   (rebase merging is not used by this repository; linear history uses squash).
+# - A push with more than 20 commits: github.event.commits is truncated to 20;
+#   the remaining commits are not checked. Normal PR merges push one commit.
+# - Force pushes/new branches are not covered (this runs only on pushes to main).
+# - The commits/<sha>/pulls API can lag shortly after a merge; the check retries.
+# - The alert is only created on failure; a Discussion creation failure still
+#   fails the job (never silently passes).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+  discussions: write
+
+concurrency:
+  group: main-integrity-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PUSHER: ${{ github.event.pusher.name }}
+      EVENT_COMMITS: ${{ toJSON(github.event.commits.*.id) }}
+      HEAD_SHA: ${{ github.sha }}
+    steps:
+      - name: Verify commits come from merged PRs
+        run: |
+          set -uo pipefail
+          shas=$(printf '%s' "$EVENT_COMMITS" | python3 -c 'import json,sys; print(chr(10).join(json.load(sys.stdin) or []))' 2>/dev/null || true)
+          [ -n "$shas" ] || shas="$HEAD_SHA"
+
+          bad=""
+          for sha in $shas; do
+            ok=""
+            for attempt in 1 2 3; do
+              ok=$(gh api "repos/$REPO/commits/$sha/pulls" \
+                --jq "[.[] | select(.merged_at != null and .base.ref == \"main\" and .merge_commit_sha == \"$sha\")] | length" 2>/dev/null || echo 0)
+              [ "${ok:-0}" -ge 1 ] && break
+              sleep 5
+            done
+            if [ "${ok:-0}" -lt 1 ]; then
+              echo "::error::Commit $sha is not the merge commit of a PR merged into main"
+              bad="$bad $sha"
+            else
+              echo "OK $sha"
+            fi
+          done
+
+          [ -z "$bad" ] && exit 0
+
+          repo_id=$(gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){id}}' \
+            -f o="${REPO%%/*}" -f n="${REPO##*/}" --jq .data.repository.id)
+          cat_id=$(gh api graphql -f query='query($o:String!,$n:String!){repository(owner:$o,name:$n){discussionCategories(first:50){nodes{id slug}}}}' \
+            -f o="${REPO%%/*}" -f n="${REPO##*/}" --jq '.data.repository.discussionCategories.nodes[] | select(.slug=="decisions") | .id')
+          if [ -z "$repo_id" ] || [ -z "$cat_id" ]; then
+            echo "::error::Could not resolve repository id or the 'decisions' Discussion category"
+            exit 1
+          fi
+
+          for sha in $bad; do
+            short=${sha:0:7}
+            body=$(printf '🤖 Agent Factory: commit %s reached `main` without a merged pull request.\n\n- Commit: https://github.com/%s/commit/%s\n- Pusher: %s\n- Workflow run: https://github.com/%s/actions/runs/%s\n\nRemediation: find out how the commit reached `main` (direct push or bypassed merge). If it is legitimate, document it here; otherwise revert it through a PR and review the guard hooks and permissions that should have prevented it.\n' \
+              "$short" "$REPO" "$sha" "$PUSHER" "$REPO" "$GITHUB_RUN_ID")
+            gh api graphql -f query='mutation($r:ID!,$c:ID!,$t:String!,$b:String!){createDiscussion(input:{repositoryId:$r,categoryId:$c,title:$t,body:$b}){discussion{url}}}' \
+              -f r="$repo_id" -f c="$cat_id" -f t="[Alert] Commit $short reached main without a merged PR" -f b="$body" \
+              --jq .data.createDiscussion.discussion.url || echo "::error::Failed to create Discussion for $short"
+          done
+          exit 1

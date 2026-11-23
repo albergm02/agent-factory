@@ -1,4 +1,4 @@
-﻿# Agent Factory
+# Agent Factory
 
 A reusable, human-supervised AI software engineering system powered by Claude Code.
 

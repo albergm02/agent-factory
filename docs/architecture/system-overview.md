@@ -231,16 +231,18 @@ This keeps Claude Code replaceable.
 
 **Consumes:** *Change Set + Evidence*.
 
-**Phase 1 quality gates, run by CI as required status checks:**
+**Phase 1 quality gates, run by CI:**
+
+"Blocking" means the merge policy and the `guard-merge` hook refuse to merge while the gate fails. Required status checks need rulesets, which are unavailable on the current plan (ADR-0002 §6).
 
 | Gate | Tooling (indicative) | Blocking |
 |---|---|---|
 | Lint, format, type check | Project-specific | Yes |
 | Unit and integration tests, with a coverage threshold | Project-specific | Yes |
 | End-to-end tests | Playwright | Yes, for UI-affecting changes |
-| Static analysis (SAST) | CodeQL | Yes, on high severity |
-| Secret scanning and push protection | GitHub | Yes |
-| Dependency review | GitHub | Yes, on new high-severity vulnerabilities |
+| Static analysis (SAST) | Semgrep now; CodeQL when the plan supports it | Yes, on high severity |
+| Secret detection | gitleaks (CI and pre-commit) now; GitHub secret scanning when the plan supports it | Yes |
+| Dependency vulnerabilities | Dependabot alerts plus an audit step in CI (for example `npm audit` or `pip-audit`) | Yes, on new high-severity vulnerabilities |
 | Spec traceability check | Custom script (the PR references a spec) | Yes |
 | Independent AI review | `reviewer` (fresh context); `security-reviewer` for R2–R3 | Yes |
 | Visual review | Playwright screenshots in a *Visual review* Discussion; owner's opinion | Yes, for user-facing changes |
@@ -274,7 +276,7 @@ There is no routine human code review. Agents merge when the merge policy is sat
 
 - GitHub repository rulesets (protected `main`, required checks, no force push) **when the plan supports them**. The repository is currently private on GitHub Free, where rulesets are unavailable, so the compensating controls of ADR-0002 §6 apply.
 - GitHub Actions on ephemeral runners.
-- A dedicated GitHub App identity for agents.
+- A dedicated GitHub App identity for agents (interim: the owner's account, ADR-0002 §2 and Security Model §6).
 - A devcontainer for local reproducibility.
 - OIDC for cloud credentials.
 - The Claude Code Bash sandbox on Linux, macOS or WSL2.
@@ -311,7 +313,8 @@ stateDiagram-v2
     InReview --> Implementing: changes requested
     InReview --> Merged: merge policy satisfied (agent merges)
     InReview --> AwaitingHuman: must-human decision or visual review
-    AwaitingHuman --> Merged: ⛔ human decides in Discussion
+    AwaitingHuman --> InReview: ⛔ human decides (PR stage)
+    AwaitingHuman --> Planned: ⛔ human decides (spec stage or escalation)
     AwaitingHuman --> Implementing: ⛔ human requests changes
     Merged --> Released: agent releases (⛔ production or public release)
     Released --> [*]
@@ -322,6 +325,8 @@ stateDiagram-v2
 ```
 
 ⛔ marks a human decision, taken in a GitHub Discussion following the protocol in ADR-0002 §2. Every other transition is performed by agents.
+
+A human decision never merges a PR by itself. After the decision, the PR returns to `InReview`, and the full merge policy (checks, independent review, checklist) still applies.
 
 ## 9. Agent model
 
@@ -337,7 +342,7 @@ stateDiagram-v2
 | `security-reviewer` | Security-focused review | Read-only | No |
 | `docs` | Documentation updates | Read, Edit (docs paths) | Docs only |
 
-**Delegation depth:** Claude Code allows nested subagents, with a configurable maximum depth (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`, default 3 at the time of writing). By policy, phase 1 uses a **depth of 1**: only `orchestrator` holds the Agent tool, and worker roles cannot delegate further. This keeps runs auditable and costs bounded. Raising the depth requires an ADR.
+**Delegation depth:** Claude Code allows nested subagents, with a configurable maximum depth (`CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH`, default 3 at the time of writing). By policy, phase 1 uses a **depth of 1**: only `orchestrator` holds the Agent tool, and worker roles cannot delegate further. This keeps runs auditable and costs bounded. Raising the depth requires an ADR and a human decision (H1).
 
 **Independence:** `reviewer` runs in a fresh context. It never sees the implementer's reasoning, only the spec, the diff and the evidence. It can be configured to use a different model.
 
@@ -415,11 +420,11 @@ evals/
 | R0 | Docs, comments, tests only |
 | R1 | Application code covered by tests |
 | R2 | Dependencies, data schemas, public APIs, performance-sensitive paths |
-| R3 | Security, authentication, CI/CD, infrastructure, data deletion or migration, agent configuration (`.claude/**`, hooks, `CODEOWNERS`, `.github/**`) |
+| R3 | Security, authentication, CI/CD, infrastructure, data deletion or migration, and any guardrail file (the single list in [ADR-0002 §5](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md#5-guardrail-change-handling-h1)) |
 
 **Effective autonomy** = `min(ceiling for the risk class, level earned by the role through evals, level requested in the Work Request)`.
 
-- The **phase 1 ceiling is L3** for every class ([ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md)). The owner granted this level provisionally, before eval data existed.
+- The **phase 1 ceiling is L3** for every class ([ADR-0002](../decisions/ADR-0002-autonomous-merge-and-human-decisions.md)). The owner granted this level provisionally, before eval data existed. Until the F1 CI exists, L3 applies only to owner-attended interactive sessions (ADR-0002 §7).
 - **Demotion is evidence-based:** a role whose evals regress, or that causes an escaped defect or a guardrail incident, drops to L2 until the cause is fixed.
 - Risk class still matters: R2–R3 changes need a `security-reviewer` pass, and R3 guardrail changes follow ADR-0002 §5.
 - The decisions that always need a human are listed in [Security Model §13](security-model.md#13-autonomy-and-human-approval-matrix).

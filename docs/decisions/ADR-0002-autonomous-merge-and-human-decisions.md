@@ -5,7 +5,7 @@
 | **Status** | Accepted |
 | **Date** | 2026-11-23 |
 | **Decision makers** | Project owner (direct instruction in a working session, 2026-11-23) |
-| **Amends** | [ADR-0001](ADR-0001-architecture.md): TD-02, TD-09, TD-12, TD-13 |
+| **Amends** | [ADR-0001](ADR-0001-architecture.md): driver D-1, TD-02, TD-09, TD-11, TD-12, TD-13, Consequences, Validation |
 | **Related** | [System Overview](../architecture/system-overview.md) · [Security Model](../architecture/security-model.md) |
 
 ## Context and problem statement
@@ -40,7 +40,7 @@ Two facts about the current environment, verified on 2026-11-23, constrain how t
 
 ### 1. Merge policy
 
-An agent may merge a PR it opened only when **all** of the following hold:
+Agents merge the PRs they open. They also merge Dependabot PRs, and PRs opened by the owner when the owner asks them to. In every case, a merge happens only when **all** of the following hold:
 
 1. **Scope:** the PR does not require any of the human decisions in §3, or each of those decisions has been approved and linked in the PR.
 2. **Checks:** every CI check is green. Agents never merge on red, never skip checks, and never use administrator overrides. Until CI exists, the PR body must contain the local validation evidence (commands and results).
@@ -50,6 +50,11 @@ An agent may merge a PR it opened only when **all** of the following hold:
 6. **No halt:** the PR does not carry the `agents:halt` or `needs-human` label.
 
 Merges use **squash**, and the head branch is deleted afterwards.
+
+**Label rules:**
+
+- Agents **never remove `agents:halt`**. Only the owner removes it.
+- Agents remove `needs-human` only after recording a valid decision (§2) in the linked Discussion.
 
 ### 2. Human decision protocol (GitHub Discussions)
 
@@ -61,12 +66,12 @@ Merges use **squash**, and the head branch is deleted afterwards.
    - links to the affected PRs or issues.
 2. The affected PR (if any) gets the `needs-human` label and a link to the Discussion. It stays open, and the agent continues with independent work.
 3. **A decision is valid only when** it is either:
-   - a Discussion comment by the owner that starts with `APPROVED`, `REJECTED` or `CHOOSE <option>`, posted after the agent's request; or
+   - a Discussion comment by the owner that starts with `APPROVED`, `REJECTED` or `CHOOSE`, is not marked as agent-written, and was **not created by an agent** (its ID does not appear in the agent audit log of created comments); or
    - an instruction the owner types directly into an interactive agent session.
 4. The agent records the outcome in the Discussion, marks the answer (where the category supports answers), removes `needs-human`, and continues.
 5. Every comment written by an agent starts with the marker `🤖 Agent Factory:`. A comment without the marker is never posted by an agent.
 
-**Interim limitation:** while agents share the owner's GitHub identity, rule 5 is a convention, not a technical control. A dedicated GitHub App identity (itself a human decision, see §3) removes this ambiguity.
+**Interim limitation:** while agents share the owner's GitHub identity, rule 5 is a convention, not a technical control. A **compromised** agent session could forge an approval comment. The audit-log check in rule 3 detects this only after the fact, and only if the audit hook was not bypassed. A dedicated GitHub App identity (itself a human decision, see §3) removes this ambiguity. Until it exists, the owner should cross-check any H1, H2, H3 or H6 decision that seems unexpected.
 
 Until the `Decisions` and `Visual review` categories exist (categories can only be created in the GitHub web UI), the `General` category is used, with the `[Decision]` and `[Visual]` title prefixes.
 
@@ -95,31 +100,48 @@ Everything else is decided and merged by agents under the merge policy. This inc
 
 ### 5. Guardrail-change handling (H1)
 
-The following paths are **guardrail files**:
+This is the **single, authoritative list of guardrail files**. Other documents refer to it.
 
-- `.claude/settings.json`;
-- `.claude/hooks/**`;
-- `.github/workflows/**`;
-- `CODEOWNERS`;
-- `docs/architecture/security-model.md`;
-- this ADR.
+- `.claude/**` (settings, including `settings.local.json`, hooks, agents and Skills);
+- `CLAUDE.md`;
+- `.github/**` (workflows, templates, Discussion forms);
+- `**/CODEOWNERS`;
+- `docs/architecture/**`;
+- `docs/decisions/**`.
 
 Any PR that touches them is classified **R3**, and:
 
 - the `security-reviewer` classifies each change as *tightening* or *relaxing*. If it is uncertain, the change is treated as relaxing;
-- relaxing changes follow the human decision protocol (§2) before merge;
+- if **any** change in the PR is relaxing, the whole PR follows the human decision protocol (§2) before merge;
 - tightening changes can be merged by the agent, and each such merge is announced in the Discussion "Guardrail change log" for review after the fact. The owner can request a revert at any time.
 
 ### 6. Compensating controls while the plan lacks server-side enforcement
 
 | Control | Type | Status |
 |---|---|---|
-| Claude Code permission rules deny `git push` to `main`, force pushes, `gh pr merge --admin`, `gh repo edit`, `gh secret *` | Preventive (agent side) | To implement in F1 |
-| `main-integrity` workflow on every push to `main`: verifies the commit comes from a merged PR with green checks; otherwise opens a `[Alert]` Discussion | Detective | To implement in F1 |
+| Claude Code permission rules: deny pushes to `main` (any refspec), force pushes, `gh pr merge --admin`, `gh repo edit`/`delete`, `gh secret`, `gh workflow`; `gh api` limited to an allowlist of read and Discussion endpoints | Preventive (agent side) | To implement in F1 |
+| Hooks `guard-merge` (covering `gh pr merge`, `gh api …/merge` and MCP merge tools) and `guard-labels` (never remove `agents:halt`) | Preventive (agent side) | To implement in F1 |
+| Secret scanning substitute: gitleaks in CI plus a pre-commit hook | Preventive and detective | To implement in F1 |
+| `main-integrity` workflow on every push to `main`: verifies the commit comes from a merged PR with green checks; otherwise opens an `[Alert]` Discussion | Detective | To implement in F1 |
+| Agent audit log of created comments and merges | Detective | To implement in F1 |
 | Merge-policy checklist recorded as a PR comment before every merge | Audit | From now on |
 | Owner can halt everything with the `agents:halt` label or by revoking access | Corrective | Available |
 
+**Limits of these controls.**
+
+- **Today** none of the preventive or detective controls above exist. Until they do, the merge policy depends on the agent following it.
+- **After F1**, the controls protect against agents that **make mistakes**. They do not protect against a **compromised** agent session that holds the owner's credentials: such a session could disable workflows, call the API directly, or change labels.
+- Protection against a compromised session requires the dedicated GitHub App identity, with no administration, workflows or secrets scopes (H2), together with server-side rulesets (H3/H4).
+
 The owner decides (H3/H4) whether to restore server-side enforcement by **making the repository public**, which makes rulesets, secret scanning and code scanning available at no cost, or by **upgrading the plan**.
+
+### 7. Interim execution exception
+
+ADR-0001 TD-11 limits autonomous runs to CI runners or containers, and limits local runs to L0–L1. Until the F1 CI exists, there is one exception:
+
+- **Owner-attended interactive sessions** on the owner's machine may operate at L3. They may open, review and merge PRs under the merge policy, because the owner is present and can stop the session at any time.
+- Unattended local runs remain limited to L0–L1.
+- The exception ends when the F1 CI pipeline is in place.
 
 ## Consequences
 

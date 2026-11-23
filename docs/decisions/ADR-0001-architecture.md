@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted. Amended by [ADR-0002](ADR-0002-autonomous-merge-and-human-decisions.md) (TD-02, TD-09, TD-12, TD-13) |
+| **Status** | Accepted. Amended by [ADR-0002](ADR-0002-autonomous-merge-and-human-decisions.md) (D-1, TD-02, TD-09, TD-11, TD-12, TD-13, Consequences, Validation) |
 | **Date** | 2026-11-23 |
 | **Decision makers** | Project owner |
 | **Related** | [System Overview](../architecture/system-overview.md) · [Security Model](../architecture/security-model.md) |
@@ -20,7 +20,7 @@ Agent Factory aims to maximize the autonomy and quality of AI-driven software en
 
 ## Decision drivers
 
-- **D-1 Human control:** critical actions must be gated by humans, using mechanisms that agents cannot bypass.
+- **D-1 Human control:** critical actions must be gated by humans, using mechanisms that agents cannot bypass. *Amended by ADR-0002:* "critical" now means the must-human list H1–H11. Mechanisms that agents cannot bypass are a target that requires the GitHub App identity and server-side rulesets; see ADR-0002 §6.
 - **D-2 Quality:** every change must be specified, tested and independently reviewed.
 - **D-3 Time to first value:** a working end-to-end vertical slice should be possible within weeks.
 - **D-4 Traceability:** every change must be traceable from request to release.
@@ -89,7 +89,7 @@ The decision includes the following technical decisions:
 | TD-08 | **Evaluation-Driven Development:** `evals/` holds golden tasks per role and per Skill. They run in CI on any change to agents, Skills, prompts or model configuration, and on a schedule. Results decide earned autonomy. | Candidate tooling: `claude plugin eval` plus a custom end-to-end harness. |
 | TD-09 | **Quality gates as code** (required status checks): lint, types, unit and integration tests with coverage, Playwright E2E, CodeQL, secret scanning, dependency review, spec traceability. AI review is advisory; human code-owner review blocks. | Thresholds are defined per target project. *Amended by ADR-0002:* independent AI review blocks; there is no routine human code review, only visual review of user-facing changes. |
 | TD-10 | **OpenTelemetry is the only telemetry standard.** Claude Code's native export (metrics, events, and traces in beta) with common `af.*` correlation attributes and the GenAI semantic conventions where applicable. | Backend chosen in a follow-up ADR. Content logging is off by default. |
-| TD-11 | **Isolation:** one branch (plus a worktree or container) per task; Bash sandbox enabled; autonomous runs only on ephemeral runners or in containers. | The sandbox does not support native Windows; use WSL2 or containers. |
+| TD-11 | **Isolation:** one branch (plus a worktree or container) per task; Bash sandbox enabled; autonomous runs only on ephemeral runners or in containers. | The sandbox does not support native Windows; use WSL2 or containers. *Amended by ADR-0002 §7:* owner-attended interactive sessions may operate at L3 until the F1 CI exists. |
 | TD-12 | **Agent identity:** a dedicated GitHub App with minimal permissions. No personal tokens. | Keeps authorship separate. *Amended by ADR-0002:* until the App exists, agents use the owner's account and mark their comments with `🤖 Agent Factory:`. Creating the App is a human decision. |
 | TD-13 | **Autonomy model:** levels L0–L4 × risk classes R0–R3. Effective level = min(class ceiling, earned, requested). Phase 1 ceiling: L2 for all classes; R3 is capped at L2 permanently. | Details in the System Overview (§13) and the Security Model (§13). *Amended by ADR-0002:* ceiling L3 (agents merge under the merge policy) for all classes; the decisions H1–H11 always escalate to a human. |
 | TD-14 | **Model per role is configuration**, not code. The reviewer may use a different model or configuration for independence. | Avoids hard-coding model IDs into agent definitions. |
@@ -99,8 +99,8 @@ The decision includes the following technical decisions:
 
 **Positive:**
 
-- An end-to-end vertical slice (issue → spec → PR → gates → human merge) can be built without custom infrastructure.
-- Guardrails rely on mechanisms enforced outside the model: rulesets, CODEOWNERS, hooks, the sandbox and permissions.
+- An end-to-end vertical slice (issue → spec → PR → gates → human merge) can be built without custom infrastructure. *Amended by ADR-0002:* the slice ends in an agent merge.
+- Guardrails rely on mechanisms enforced outside the model: rulesets, CODEOWNERS, hooks, the sandbox and permissions. *Amended by ADR-0002:* rulesets are unavailable on the current plan, and CODEOWNERS is used for notification only.
 - Humans work in a familiar tool (GitHub), and every action has an audit trail there.
 - Autonomy can grow incrementally, backed by evaluation data rather than opinion.
 
@@ -122,6 +122,8 @@ The decision is considered validated when phase F1 (vertical slice at L2 on a pi
 
 If F1 shows that Option B cannot meet these criteria, this ADR is superseded.
 
+*Amended by ADR-0002:* F1 runs at **L3**. The first criterion becomes "10 tasks completed end to end and merged by agents under the merge policy, with every must-human decision taken in a Discussion". A further criterion is added: no escaped critical defect.
+
 ## Follow-up decisions
 
 | ADR | Topic |
@@ -141,11 +143,11 @@ These questions need a human decision. Defaults apply until they are resolved.
 | # | Question | Default until resolved |
 |---|---|---|
 | Q1 | Does Agent Factory operate only on this repository, or as a reusable kit installed into other repositories? | Design as a reusable kit and validate on one pilot repository |
-| Q2 | Where do autonomous runs execute: a local Windows machine, GitHub Actions, or the cloud? | GitHub Actions and containers; local runs only at L0–L1 |
+| Q2 | Where do autonomous runs execute: a local Windows machine, GitHub Actions, or the cloud? | **Resolved ([Discussion #3](https://github.com/albergm02/agent-factory/discussions/3), D4):** GitHub Actions and containers. Interim exception in ADR-0002 §7 |
 | Q3 | How many human approvers are there? | **Resolved (ADR-0002):** one owner, who decides only H1–H11 decisions and visual matters |
 | Q4 | Which GitHub plan applies? Does it support rulesets, secret scanning and code scanning on private repositories? | **Resolved:** GitHub Free, private repository, so no rulesets or branch protection. Whether to go public or upgrade is a human decision (ADR-0002 §6) |
-| Q5 | How is the model accessed (API key or subscription), and what data-retention terms apply? Is there code that must not be sent? | API key in CI; no sensitive repositories in F1 |
-| Q6 | What are the budget limits per task and per month? | To be defined before F1 |
+| Q5 | How is the model accessed (API key or subscription), and what data-retention terms apply? Is there code that must not be sent? | **Partly resolved (Discussion #3, D6):** an API key stored as an Actions secret. Still open: data-retention terms and code that must not be sent; default: no sensitive repositories in F1 |
+| Q6 | What are the budget limits per task and per month? | **Pending confirmation (Discussion #3, D5).** Proposed: 2 USD per task, 50 USD per month |
 | Q7 | Should the documentation language stay English? | English, consistent with the README |
 
 ## References
